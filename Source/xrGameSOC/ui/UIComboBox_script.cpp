@@ -1,4 +1,4 @@
-﻿// File:        UIComboBox_script.cpp
+// File:        UIComboBox_script.cpp
 // Description: exports CUIComobBox to LUA environment
 // Created:     11.12.2004
 // Author:      Serhiy O. Vynnychenko
