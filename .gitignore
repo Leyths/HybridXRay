@@ -6,7 +6,9 @@ _appdata_/
 _appdata_cs_/
 _appdata_soc_/
 _Build/
+_BuildLogs/
 /Bin/
+Source/Bin/
 import/
 rawdata/PUT/
 rawdata/backup/
