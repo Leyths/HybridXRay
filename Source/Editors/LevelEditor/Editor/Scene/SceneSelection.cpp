@@ -80,6 +80,54 @@ void EScene::RemoveSelection(ObjClassID classfilter)
         ESceneToolBase* mt = GetTool(classfilter);
         if (mt && mt->IsEditable())
             mt->RemoveSelection();
+
+        // Folders are class-agnostic organisational containers stored in
+        // their own OBJCLASS_FOLDER tool, so the per-class call above never
+        // touches them. Without this fan-out, hitting Delete on a folder
+        // while a regular tool (Light / Object / Spawn / ...) is active
+        // deletes the folder's child leaves (they live in their own
+        // per-class tool) but leaves the empty folder row behind, or — if
+        // the folder is the only thing selected — does nothing at all.
+        // Mirrors ShowObjects' folder fan-out further down this file.
+        if (classfilter != (ObjClassID)OBJCLASS_FOLDER)
+        {
+            ESceneCustomOTool* fot = dynamic_cast<ESceneCustomOTool*>(GetTool(OBJCLASS_FOLDER));
+            if (fot && fot->IsEditable())
+            {
+                ObjectList& lst = fot->GetObjects();
+                ObjectIt    _F  = lst.begin();
+                while (_F != lst.end())
+                {
+                    CFolderObject* fo = (CFolderObject*)*_F;
+                    if (fo->Selected() && fo->GetFolderClass() == classfilter &&
+                        !fo->m_CO_Flags.test(CCustomObject::flObjectInGroup))
+                    {
+                        // CFolderObject::OnSelectionRemove cascades to children
+                        // via Scene->RemoveObject on each. Children live in
+                        // their per-class tool, so this doesn't invalidate
+                        // our iterator into the folder tool. We advance _F
+                        // before calling Scene->RemoveObject on the folder
+                        // itself (which DOES mutate fot->m_Objects).
+                        if (fo->OnSelectionRemove())
+                        {
+                            ObjectIt _D = _F;
+                            ++_F;
+                            CCustomObject* obj = *_D;
+                            Scene->RemoveObject(obj, false, true);
+                            xr_delete(obj);
+                        }
+                        else
+                        {
+                            ++_F;
+                        }
+                    }
+                    else
+                    {
+                        ++_F;
+                    }
+                }
+            }
+        }
     }
     UI->UpdateScene(true);
 }
