@@ -65,7 +65,7 @@ if errorlevel 1 (
   goto :EOF
 )
 echo git found
-call .GitInfo.cmd</Command>
+call ".\.GitInfo.cmd"</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -101,7 +101,7 @@ if errorlevel 1 (
   goto :EOF
 )
 echo git found
-call .GitInfo.cmd</Command>
+call ".\.GitInfo.cmd"</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

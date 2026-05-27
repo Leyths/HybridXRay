@@ -476,7 +476,9 @@
     <Image Include="..\xrHybridXRay\resources\Splash_ShoC.bmp" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="..\xrHybridXRay\resources\resource.rc" />
+    <ResourceCompile Include="..\xrHybridXRay\resources\resource.rc">
+      <AdditionalIncludeDirectories>..\xrHybridXRay\resources;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
