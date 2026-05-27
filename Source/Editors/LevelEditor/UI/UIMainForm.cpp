@@ -162,6 +162,15 @@ void UIMainForm::Draw()
     if (bDemoImGui)
         ImGui::ShowDemoWindow(&bDemoImGui);
     m_Render->Draw();
+
+    // Default the Properties tab to be selected on launch (it docks together with World Properties).
+    static bool sFocusedPropertiesOnce = false;
+    if (!sFocusedPropertiesOnce && !m_Properties->IsClosed())
+    {
+        ImGui::SetWindowFocus("Properties"_RU >> u8"Свойства");
+        sFocusedPropertiesOnce = true;
+    }
+
     splash::hide();
 }
 
