@@ -525,6 +525,9 @@ void UIPropertiesItem::DrawProp()
                 PropertiesFrom->m_EditTextValueInitial  = xr_strdup(V->GetValue());
                 PropertiesFrom->m_EditTextValueDataSize = xr_strlen(PropertiesFrom->m_EditTextValueData) + 1;
                 PropertiesFrom->m_EditTextValue         = PItem;
+                // Capture the scope-resolved popup id so DrawEditText's stale
+                // check can probe it scope-invariantly.
+                PropertiesFrom->m_EditTextPopupId       = ImGui::GetID("EditText");
             }
             PropertiesFrom->DrawEditText();
         }
@@ -557,6 +560,9 @@ void UIPropertiesItem::DrawProp()
                 PropertiesFrom->m_EditTextValueInitial  = xr_strdup(V->GetValue().c_str() ? V->GetValue().c_str() : "");
                 PropertiesFrom->m_EditTextValueDataSize = xr_strlen(PropertiesFrom->m_EditTextValueData) + 1;
                 PropertiesFrom->m_EditTextValue         = PItem;
+                // Capture the scope-resolved popup id so DrawEditText's stale
+                // check can probe it scope-invariantly.
+                PropertiesFrom->m_EditTextPopupId       = ImGui::GetID("EditText");
             }
             PropertiesFrom->DrawEditText();
         }
@@ -590,6 +596,9 @@ void UIPropertiesItem::DrawProp()
                 PropertiesFrom->m_EditTextValueInitial  = xr_strdup(V->GetValue().c_str());
                 PropertiesFrom->m_EditTextValueDataSize = xr_strlen(PropertiesFrom->m_EditTextValueData) + 1;
                 PropertiesFrom->m_EditTextValue         = PItem;
+                // Capture the scope-resolved popup id so DrawEditText's stale
+                // check can probe it scope-invariantly.
+                PropertiesFrom->m_EditTextPopupId       = ImGui::GetID("EditText");
             }
             PropertiesFrom->DrawEditText();
         }

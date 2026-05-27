@@ -63,6 +63,11 @@ private:
 
     TOnModifiedEvent OnModifiedEvent;
     PropItem*        m_EditTextValue;
+    // Stable ImGuiID for the currently-open "EditText" popup. Captured at
+    // open-time so DrawEditText's stale-session check can probe IsPopupOpen
+    // with the ImGuiID overload (scope-invariant), instead of re-hashing
+    // "EditText" against the calling PropItem's id stack.
+    ImGuiID          m_EditTextPopupId;
 
     char*            m_EditTextValueData;
     char*            m_EditTextValueInitial;

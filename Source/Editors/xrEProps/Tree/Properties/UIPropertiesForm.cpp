@@ -1,13 +1,24 @@
 ﻿#include "stdafx.h"
 
+// Forward-declare the ImGuiID overload of IsPopupOpen. imgui.h only exposes
+// the string variant (which can't combine with ImGuiPopupFlags_AnyPopupLevel —
+// see imgui.cpp:10093), and we can't include imgui_internal.h here because it
+// redefines ImGuiItemFlags_ that imgui_user.h already declared for non-xrEUI
+// consumers. The symbol is exported via IMGUI_API on its declaration inside
+// imgui_internal.h, so the linker resolves the call.
+namespace ImGui { IMGUI_API bool IsPopupOpen(ImGuiID id, ImGuiPopupFlags popup_flags); }
+
 UIPropertiesForm::UIPropertiesForm(): m_Root("", this, {})
 {
     m_bModified            = false;
     m_EditChooseValue      = nullptr;
     m_EditShortcutValue    = nullptr;
     m_EditTextureValue     = nullptr;
+    m_EditTextValue        = nullptr;
+    m_EditTextPopupId      = 0;
     m_EditTextValueData    = nullptr;
     m_EditTextValueInitial = nullptr;
+    m_EditGameTypeValue    = nullptr;
     m_Flags.zero();
 }
 
@@ -139,6 +150,13 @@ void UIPropertiesForm::ClearProperties()
     m_EditChooseValue      = nullptr;
     m_EditTextureValue     = nullptr;
     m_EditShortcutValue    = nullptr;
+    // Must null m_EditTextValue here too: leaving it pointing at a
+    // now-deleted PropItem makes IsEditingValue() return true forever, which
+    // makes CLevelTool::OnFrame defer every subsequent panel rebuild and the
+    // panel silently goes empty. Same story for m_EditGameTypeValue.
+    m_EditTextValue        = nullptr;
+    m_EditTextPopupId      = 0;
+    m_EditGameTypeValue    = nullptr;
     m_EditTextValueInitial = nullptr;
     if (m_EditTextValueData)
     {
@@ -169,9 +187,30 @@ void UIPropertiesForm::DrawEditText()
     // editing session ended (Cancel/Ok/click-outside) — clear the pointer so
     // IsEditingValue() returns false and the panel can refresh again. Without
     // this, m_EditTextValue stays bound to the last text item indefinitely and
-    // RealUpdateProperties gets deferred forever.
-    if (m_EditTextValue && !ImGui::IsPopupOpen("EditText", 0))
-        m_EditTextValue = nullptr;
+    // RealUpdateProperties gets deferred forever, leaving the panel empty.
+    //
+    // We probe with the ImGuiID overload + AnyPopupLevel because DrawEditText
+    // is called once per text PropItem per frame (inside that item's
+    // PushID scope). The string overload re-hashes "EditText" against the
+    // CURRENT id stack and reports "closed" for every sibling text item, which
+    // would null m_EditTextValue mid-session and either crash the OK click or
+    // wedge the panel. The popup id is captured at open-time in
+    // UIPropertiesItem_DrawProp.cpp so this answer is scope-invariant.
+    //
+    // Guard: if m_EditTextValue is somehow set with no captured id, treat it
+    // as a stale pointer and null it unconditionally — never let the lifetime
+    // tracker get stuck. (Belt + braces: the capture should always happen
+    // alongside the assignment, but a stuck panel is bad enough that we
+    // prefer over-cleanup to under-cleanup.)
+    if (m_EditTextValue)
+    {
+        if (m_EditTextPopupId == 0 ||
+            !ImGui::IsPopupOpen(m_EditTextPopupId, ImGuiPopupFlags_AnyPopupLevel))
+        {
+            m_EditTextValue   = nullptr;
+            m_EditTextPopupId = 0;
+        }
+    }
 
     if (ImGui::BeginPopupContextItem("EditText", 0))
     {
