@@ -271,6 +271,8 @@ void CLevelTool::ShowProperties(LPCSTR focus_to_item)
     RealUpdateProperties();
     if (MainForm)
         MainForm->GetPropertiesFrom()->Open();
+    if (m_Props && !m_Props->IsClosed())
+        m_Props->SetFocusOnMe();
 
     /*
     if (focus_to_item)
@@ -311,9 +313,13 @@ void CLevelTool::RealUpdateProperties()
         m_Props->AssignItems(items);
     }
 
-    if (!m_Props->IsClosed())
-        m_Props->SetFocusOnMe();
-
+    // NOTE: don't grab window focus here. RealUpdateProperties runs on every
+    // COMMAND_UPDATE_PROPERTIES (i.e. every selection change), and calling
+    // ImGui::SetWindowFocus() on the Properties window kills the ActiveID of
+    // whichever window the user is currently interacting with — most visibly,
+    // it cancels an in-progress drag from the Object List the moment selection
+    // changes. The explicit ShowProperties command re-grabs focus itself when
+    // the user actually asks for it.
     m_Flags.set(flUpdateProperties, FALSE);
     m_Props->setModified(FALSE);
 }
