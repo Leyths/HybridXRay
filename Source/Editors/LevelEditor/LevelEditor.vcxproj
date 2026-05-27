@@ -32,6 +32,7 @@
     <ClCompile Include="Editor\Entry\CustomObjectAnimation.cpp" />
     <ClCompile Include="Editor\Entry\CustomObjectLE.cpp" />
     <ClCompile Include="Editor\Entry\EditObjectExportLWO.cpp" />
+    <ClCompile Include="Editor\Entry\Folder\FolderObject.cpp" />
     <ClCompile Include="Editor\Entry\Glow\glow.cpp" />
     <ClCompile Include="Editor\Entry\Group\GroupObject.cpp" />
     <ClCompile Include="Editor\Entry\Group\GroupObjectUtils.cpp" />
@@ -80,6 +81,7 @@
     <ClCompile Include="Editor\Tools\Details\ESceneDOTools_Generate.cpp" />
     <ClCompile Include="Editor\Tools\Details\ESceneDOTools_Pick.cpp" />
     <ClCompile Include="Editor\Tools\FogVolume\ESceneFogVolumeTools.cpp" />
+    <ClCompile Include="Editor\Tools\Folder\ESceneFolderTools.cpp" />
     <ClCompile Include="Editor\Tools\Glow\ESceneGlowTools.cpp" />
     <ClCompile Include="Editor\Tools\Glow\ESceneGlowToolsIO.cpp" />
     <ClCompile Include="Editor\Tools\Glow\ESceneGroupToolsIO.cpp" />
@@ -211,6 +213,7 @@
     <ClInclude Include="AI\xrThread.h" />
     <ClInclude Include="Editor\Builder\Builder.h" />
     <ClInclude Include="Editor\Entry\CustomObject.h" />
+    <ClInclude Include="Editor\Entry\Folder\FolderObject.h" />
     <ClInclude Include="Editor\Entry\Glow\glow.h" />
     <ClInclude Include="Editor\Entry\Group\GroupObject.h" />
     <ClInclude Include="Editor\Entry\Light\ELight.h" />
@@ -239,6 +242,7 @@
     <ClInclude Include="Editor\Tools\Details\ESceneDOTools.h" />
     <ClInclude Include="Editor\Tools\ESceneClassList.h" />
     <ClInclude Include="Editor\Tools\FogVolume\ESceneFogVolumeTools.h" />
+    <ClInclude Include="Editor\Tools\Folder\ESceneFolderTools.h" />
     <ClInclude Include="Editor\Tools\Glow\ESceneGlowTools.h" />
     <ClInclude Include="Editor\Tools\Group\ESceneGroupControls.h" />
     <ClInclude Include="Editor\Tools\Group\ESceneGroupTools.h" />

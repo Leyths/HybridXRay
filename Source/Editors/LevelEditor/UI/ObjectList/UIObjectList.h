@@ -1,5 +1,6 @@
-﻿#pragma once
+#pragma once
 class CCustomObject;
+class CFolderObject;
 class UIObjectList: public xrUI
 {
     friend class UIObjectListItem;
@@ -16,6 +17,12 @@ public:
         return Form;
     }
     static void Refresh();
+
+    // Folder operations
+    static bool IsFolderAllowedForClass(ObjClassID cls);
+    static void CreateFolderForCurrentClass();
+    static void ReparentSelectedTo(CFolderObject* target);   // target == NULL → unparent (root)
+    static void ReorderSelectedBefore(CCustomObject* target);
 
 private:
     static UIObjectList* Form;

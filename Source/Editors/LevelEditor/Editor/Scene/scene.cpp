@@ -745,6 +745,15 @@ void EScene::FillPropObjects(LPCSTR pref, PropItemVec& items, ObjClassID cls_id)
         {
             mt->FillPropObjects("", items);
         }
+        // Folders are class-agnostic organizational containers — surface a selected
+        // folder's properties regardless of which class is currently active so the
+        // panel rename flow works the same as for any other object.
+        if (cls_id != (ObjClassID)OBJCLASS_FOLDER)
+        {
+            ESceneToolBase* fot = GetTool(OBJCLASS_FOLDER);
+            if (fot)
+                fot->FillPropObjects("", items);
+        }
     }
 }
 

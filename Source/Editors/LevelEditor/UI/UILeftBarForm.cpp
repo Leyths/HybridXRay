@@ -25,7 +25,12 @@ void UILeftBarForm::Draw()
         ImGui::SameLine(0, 10);
         ImGui::BulletTextColored(ImVec4(0.75, 1.5, 0, 0.85), "");
         ImGui::BeginGroup();
-        static ObjClassID Tools[OBJCLASS_COUNT + 1] =
+        // The left-bar palette is a fixed list of user-facing scene tools (not every
+        // ObjClassID — folders and other organizational classes are intentionally
+        // excluded). Hard-coding the count keeps the column-split arithmetic stable
+        // when new ObjClassIDs are added.
+        static const u32  kToolsCount     = 16;
+        static ObjClassID Tools[kToolsCount + 1] =
         {
             OBJCLASS_SCENEOBJECT, OBJCLASS_LIGHT,      OBJCLASS_SOUND_SRC, OBJCLASS_SOUND_ENV, OBJCLASS_GLOW,
             OBJCLASS_SHAPE,       OBJCLASS_SPAWNPOINT, OBJCLASS_WAY,       OBJCLASS_SECTOR,    OBJCLASS_PORTAL,
@@ -42,7 +47,7 @@ void UILeftBarForm::Draw()
         {
             u32 id = 0;
             if (i % 2)
-                id = ((OBJCLASS_COUNT + 1) / 2) + (i / 2);
+                id = (kToolsCount / 2) + (i / 2);
             else
                 id = (i / 2);
             ESceneToolBase* tool   = Scene->GetTool(Tools[id]);

@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 
 UIObjectList* UIObjectList::Form = nullptr;
 UIObjectList::UIObjectList(): m_Root("")
@@ -60,9 +60,11 @@ void UIObjectList::Draw()
             for (UITreeItem* Item: m_Root.Items)
             {
                 UIObjectListItem* RItem = (UIObjectListItem*)Item;
-                if (RItem->bIsSelected)
+                if (RItem->bIsSelected && RItem->Object)
                 {
-                    RItem->Object->Show(true);
+                    RItem->Object->Show(TRUE);
+                    if (RItem->Object->FClassID == OBJCLASS_FOLDER)
+                        ((CFolderObject*)RItem->Object)->PropagateShow(true);
                 }
             }
         }
@@ -74,9 +76,11 @@ void UIObjectList::Draw()
             for (UITreeItem* Item: m_Root.Items)
             {
                 UIObjectListItem* RItem = (UIObjectListItem*)Item;
-                if (RItem->bIsSelected)
+                if (RItem->bIsSelected && RItem->Object)
                 {
-                    RItem->Object->Show(false);
+                    RItem->Object->Show(FALSE);
+                    if (RItem->Object->FClassID == OBJCLASS_FOLDER)
+                        ((CFolderObject*)RItem->Object)->PropagateShow(false);
                 }
             }
         }
@@ -100,6 +104,19 @@ void UIObjectList::Draw()
             }
         }
         if (ImGui::IsItemHovered())
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+        ImGui::Separator();
+        const bool can_add_folder = IsFolderAllowedForClass(m_cur_cls);
+        if (!can_add_folder)
+            ImGui::BeginDisabled();
+        if (ImGui::Button("+ Folder"_RU >> u8"+ Папка", ImVec2(-1, 0)))
+        {
+            CreateFolderForCurrentClass();
+        }
+        if (!can_add_folder)
+            ImGui::EndDisabled();
+        if (ImGui::IsItemHovered() && can_add_folder)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
     ImGui::EndChild();
@@ -140,25 +157,21 @@ void UIObjectList::Refresh()
     if (Form == nullptr)
         return;
     Form->m_Root    = UIObjectListItem("");
-
     Form->m_cur_cls = LTools->CurrentClassID();
-    for (SceneToolsMapPairIt it = Scene->FirstTool(); it != Scene->LastTool(); ++it)
+
+    if (Form->m_cur_cls == OBJCLASS_DUMMY)
     {
-        ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(it->second);
-        if (ot && ((Form->m_cur_cls == OBJCLASS_DUMMY) || (it->first == Form->m_cur_cls)))
+        // Flat list — show everything (including folders, but without their hierarchy).
+        for (SceneToolsMapPairIt it = Scene->FirstTool(); it != Scene->LastTool(); ++it)
         {
-            if (it->first == OBJCLASS_DUMMY)
-                continue;
-            ObjectList& lst   = ot->GetObjects();
-            size_t      Index = 0;
-            for (CCustomObject* Obj: lst)
+            ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(it->second);
+            if (ot && (it->first != (ObjClassID)OBJCLASS_DUMMY))
             {
-                if (Obj->GetName() == 0 || Obj->GetName()[0] == 0)
+                ObjectList& lst = ot->GetObjects();
+                for (CCustomObject* Obj: lst)
                 {
-                    continue;
-                }
-                else
-                {
+                    if (Obj->GetName() == 0 || Obj->GetName()[0] == 0)
+                        continue;
                     UIObjectListItem* Item = static_cast<UIObjectListItem*>(Form->m_Root.AppendItem(Obj->GetName(), {}, 0));
                     VERIFY(Item);
                     Item->Object = Obj;
@@ -166,7 +179,298 @@ void UIObjectList::Refresh()
             }
         }
     }
+    else
+    {
+        // Hierarchical view: build a tree using m_pOwnerObject pointing at folder objects
+        // of our class affinity. We use multiple passes so children only appear after
+        // their parent item has been created.
+        ObjectList all_for_class;
+
+        ESceneCustomOTool* ot = Scene->GetOTool(Form->m_cur_cls);
+        if (ot)
+        {
+            ObjectList& lst = ot->GetObjects();
+            for (CCustomObject* Obj: lst)
+                all_for_class.push_back(Obj);
+        }
+        ESceneCustomOTool* fot = Scene->GetOTool(OBJCLASS_FOLDER);
+        if (fot)
+        {
+            ObjectList& flst = fot->GetObjects();
+            for (CCustomObject* Obj: flst)
+            {
+                CFolderObject* fo = (CFolderObject*)Obj;
+                if (fo->GetFolderClass() == Form->m_cur_cls)
+                    all_for_class.push_back(fo);
+            }
+        }
+
+        // map: folder object → its UIObjectListItem
+        xr_map<CCustomObject*, UIObjectListItem*> item_map;
+        bool                                      progressed = true;
+        u32                                       placed     = 0;
+        // Loop until no more progress can be made (handles dangling parents safely).
+        while (progressed)
+        {
+            progressed = false;
+            for (CCustomObject* Obj: all_for_class)
+            {
+                if (item_map.find(Obj) != item_map.end())
+                    continue;
+                if (Obj->GetName() == 0 || Obj->GetName()[0] == 0)
+                    continue;
+
+                CCustomObject* parent_obj = Obj->m_pOwnerObject;
+                if (parent_obj && parent_obj->FClassID != OBJCLASS_FOLDER)
+                    parent_obj = NULL;
+                // Defensive: if parent exists but is for a different class, treat as root.
+                if (parent_obj && ((CFolderObject*)parent_obj)->GetFolderClass() != Form->m_cur_cls)
+                    parent_obj = NULL;
+
+                UITreeItem* parent_item = nullptr;
+                if (parent_obj)
+                {
+                    xr_map<CCustomObject*, UIObjectListItem*>::iterator pit = item_map.find(parent_obj);
+                    if (pit == item_map.end())
+                        continue;   // wait for parent
+                    parent_item = pit->second;
+                }
+                else
+                {
+                    parent_item = &Form->m_Root;
+                }
+
+                UIObjectListItem* Item = static_cast<UIObjectListItem*>(parent_item->AppendItem(Obj->GetName(), {}, 0));
+                VERIFY(Item);
+                Item->Object  = Obj;
+                item_map[Obj] = Item;
+                placed++;
+                progressed = true;
+            }
+        }
+
+        // Anything left unplaced (broken parent chain) — emit at root.
+        for (CCustomObject* Obj: all_for_class)
+        {
+            if (item_map.find(Obj) != item_map.end())
+                continue;
+            if (Obj->GetName() == 0 || Obj->GetName()[0] == 0)
+                continue;
+            UIObjectListItem* Item = static_cast<UIObjectListItem*>(Form->m_Root.AppendItem(Obj->GetName(), {}, 0));
+            VERIFY(Item);
+            Item->Object  = Obj;
+            item_map[Obj] = Item;
+        }
+    }
+
     Form->m_LastSelected = nullptr;
+}
+
+bool UIObjectList::IsFolderAllowedForClass(ObjClassID cls)
+{
+    switch (cls)
+    {
+        case OBJCLASS_SCENEOBJECT:
+        case OBJCLASS_LIGHT:
+        case OBJCLASS_SHAPE:
+        case OBJCLASS_SPAWNPOINT:
+        case OBJCLASS_WAY:
+        case OBJCLASS_SECTOR:
+        case OBJCLASS_PORTAL:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void UIObjectList::CreateFolderForCurrentClass()
+{
+    if (Form == nullptr)
+        return;
+    ObjClassID cls = LTools->CurrentClassID();
+    if (!IsFolderAllowedForClass(cls))
+        return;
+
+    string256 name;
+    Scene->GenObjectName(OBJCLASS_FOLDER, name, "folder");
+    CFolderObject* folder = xr_new<CFolderObject>((LPVOID)0, name);
+    folder->SetFolderClass(cls);
+    Scene->AppendObject(folder, true);
+    Refresh();
+}
+
+void UIObjectList::ReparentSelectedTo(CFolderObject* target)
+{
+    if (Form == nullptr)
+        return;
+
+    // Collect all currently-selected scene objects (not just the UI list items —
+    // selection lives on the scene objects so this picks up multi-select correctly).
+    ObjClassID expected_class = target ? target->GetFolderClass() : (ObjClassID)Form->m_cur_cls;
+    ObjectList selected_list;
+    for (SceneToolsMapPairIt it = Scene->FirstTool(); it != Scene->LastTool(); ++it)
+    {
+        ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(it->second);
+        if (!ot)
+            continue;
+        for (CCustomObject* Obj: ot->GetObjects())
+            if (Obj->Selected())
+                selected_list.push_back(Obj);
+    }
+
+    if (selected_list.empty())
+        return;
+
+    bool modified = false;
+    for (CCustomObject* Obj: selected_list)
+    {
+        if (Obj == (CCustomObject*)target)
+            continue;
+
+        // Class compatibility check.
+        if (Obj->FClassID == OBJCLASS_FOLDER)
+        {
+            CFolderObject* fo = (CFolderObject*)Obj;
+            if (target && fo->GetFolderClass() != target->GetFolderClass())
+                continue;
+            if (!target && fo->GetFolderClass() != (ObjClassID)Form->m_cur_cls)
+                continue;
+        }
+        else
+        {
+            if (target && Obj->FClassID != target->GetFolderClass())
+                continue;
+            if (!target && Obj->FClassID != (ObjClassID)Form->m_cur_cls)
+                continue;
+        }
+
+        // Detach from previous folder if applicable.
+        if (Obj->m_pOwnerObject && Obj->m_pOwnerObject->FClassID == OBJCLASS_FOLDER)
+        {
+            ((CFolderObject*)Obj->m_pOwnerObject)->RemoveChild(Obj);
+        }
+
+        if (target)
+        {
+            if (target->AddChild(Obj))
+                modified = true;
+        }
+        else
+        {
+            Obj->m_pOwnerObject = NULL;
+            Obj->m_CO_Flags.set(CCustomObject::flObjectInFolder, FALSE);
+            modified = true;
+        }
+    }
+
+    if (modified)
+    {
+        Scene->UndoSave();
+        Refresh();
+    }
+}
+
+void UIObjectList::ReorderSelectedBefore(CCustomObject* target)
+{
+    if (Form == nullptr || !target)
+        return;
+
+    // Folder rows are reparent targets, not reorder targets — early out.
+    if (target->FClassID == OBJCLASS_FOLDER)
+        return;
+
+    // Target's visual parent (a folder, or NULL for root). Sources will get
+    // reparented to this if they aren't already siblings.
+    CFolderObject* target_parent = nullptr;
+    if (target->m_pOwnerObject && target->m_pOwnerObject->FClassID == OBJCLASS_FOLDER)
+        target_parent = (CFolderObject*)target->m_pOwnerObject;
+
+    // Snapshot of currently-selected scene objects across all tools (so multi-drag
+    // from anywhere works). We iterate per-tool m_Objects so the relative order
+    // among same-class sources is preserved in the result.
+    xr_vector<CCustomObject*> sources;
+    for (SceneToolsMapPairIt it = Scene->FirstTool(); it != Scene->LastTool(); ++it)
+    {
+        ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(it->second);
+        if (!ot)
+            continue;
+        for (CCustomObject* obj: ot->GetObjects())
+            if (obj != target && obj->Selected())
+                sources.push_back(obj);
+    }
+    if (sources.empty())
+        return;
+
+    // Pass 1: reparent each source whose parent differs from target's. This
+    // sets m_pOwnerObject + updates the folder's m_Children tracking.
+    bool any_changed = false;
+    for (CCustomObject* src: sources)
+    {
+        CFolderObject* src_parent = nullptr;
+        if (src->m_pOwnerObject && src->m_pOwnerObject->FClassID == OBJCLASS_FOLDER)
+            src_parent = (CFolderObject*)src->m_pOwnerObject;
+
+        if (src_parent == target_parent)
+            continue;
+
+        // Class-compatibility check when reparenting into a folder.
+        if (target_parent)
+        {
+            if (src->FClassID == OBJCLASS_FOLDER)
+            {
+                CFolderObject* sf = (CFolderObject*)src;
+                if (sf->GetFolderClass() != target_parent->GetFolderClass())
+                    continue;
+            }
+            else if (src->FClassID != target_parent->GetFolderClass())
+            {
+                continue;
+            }
+        }
+
+        if (src_parent)
+            src_parent->RemoveChild(src);
+
+        if (target_parent)
+        {
+            target_parent->AddChild(src);
+        }
+        else
+        {
+            src->m_pOwnerObject = NULL;
+            src->m_CO_Flags.set(CCustomObject::flObjectInFolder, FALSE);
+        }
+        any_changed = true;
+    }
+
+    // Pass 2: splice same-class sources to be right before target in the class
+    // tool's underlying m_Objects list, so the visual order is "before target".
+    ESceneCustomOTool* ot = Scene->GetOTool(target->FClassID);
+    if (ot)
+    {
+        ObjectList& list      = ot->GetObjects();
+        ObjectIt    target_it = std::find(list.begin(), list.end(), target);
+        if (target_it != list.end())
+        {
+            for (CCustomObject* src: sources)
+            {
+                if (src->FClassID != target->FClassID)
+                    continue;
+                ObjectIt src_it = std::find(list.begin(), list.end(), src);
+                if (src_it != list.end() && src_it != target_it)
+                {
+                    list.splice(target_it, list, src_it);
+                    any_changed = true;
+                }
+            }
+        }
+    }
+
+    if (any_changed)
+    {
+        Scene->UndoSave();
+        Refresh();
+    }
 }
 
 void UIObjectList::DrawObjects()
@@ -174,7 +478,7 @@ void UIObjectList::DrawObjects()
     if (LTools->CurrentClassID() != m_cur_cls)
         Refresh();
 
-    static ImGuiTableFlags flags = 
+    static ImGuiTableFlags flags =
         ImGuiTableFlags_BordersV
         | ImGuiTableFlags_BordersOuterH
         | ImGuiTableFlags_Resizable
@@ -188,6 +492,25 @@ void UIObjectList::DrawObjects()
         ImGui::TableSetupColumn("Objects"_RU >> u8"Объекты", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
         m_Root.DrawRoot();
+
+        // Unparent drop zone — a final wide row at the bottom that accepts drops to
+        // move items back to the root level. Not disabled (a disabled Selectable
+        // doesn't register as a drop target).
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::PushID("##unparent_zone");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::Selectable("(drop here to unparent)"_RU >> u8"(перетащите сюда чтобы убрать из папки)", false, 0, ImVec2(-1, ImGui::GetTextLineHeight() * 1.5f));
+        ImGui::PopStyleColor();
+        if (ImGui::BeginDragDropTarget())
+        {
+            const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("OBJLIST_ITEM");
+            if (payload)
+                ReparentSelectedTo(NULL);
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::PopID();
+
         ImGui::EndTable();
     }
 }

@@ -99,6 +99,7 @@
 #include "Editor/Utils/Custom2DProjector.h"
 
 #include "Editor/Entry/CustomObject.h"
+#include "Editor/Entry/Folder/FolderObject.h"
 #include "Editor/Entry/Glow/glow.h"
 #include "Editor/Entry/Group/GroupObject.h"
 #include "Editor/Entry/Light/ELight.h"
@@ -122,6 +123,7 @@
 #include "Editor/Tools/AIMap/ESceneAIMapControls.h"
 #include "Editor/Tools/Details/ESceneDOTools.h"
 #include "Editor/Tools/FogVolume/ESceneFogVolumeTools.h"
+#include "Editor/Tools/Folder/ESceneFolderTools.h"
 #include "Editor/Tools/Group/ESceneGroupTools.h"
 #include "Editor/Tools/Group/ESceneGroupControls.h"
 #include "Editor/Tools/Light/ESceneLightTools.h"

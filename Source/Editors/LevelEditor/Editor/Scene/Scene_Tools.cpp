@@ -26,6 +26,7 @@ void EScene::CreateSceneTools()
     RegisterSceneTools(xr_new<ESceneAIMapTool>());       //+
     RegisterSceneTools(xr_new<ESceneWallmarkTool>());    //+
     RegisterSceneTools(xr_new<ESceneFogVolumeTool>());   //+
+    RegisterSceneTools(xr_new<ESceneFolderTool>());      //+
 }
 
 void EScene::DestroySceneTools()

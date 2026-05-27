@@ -64,6 +64,7 @@ public:
         flRenderAnyWayIfSelected = (1 << 4),
         flObjectInGroup          = (1 << 5),
         flObjectInGroupUnique    = (1 << 6),
+        flObjectInFolder         = (1 << 7),
 
         flAutoKey                = (1 << 30),
         flCameraView             = (1 << 31),

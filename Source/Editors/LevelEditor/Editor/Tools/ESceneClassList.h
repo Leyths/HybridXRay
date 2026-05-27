@@ -25,7 +25,8 @@ enum
     OBJCLASS_AIMAP       = 13,
     OBJCLASS_WM          = 14,
     OBJCLASS_FOG_VOL     = 15,
-    OBJCLASS_COUNT       = 16,
+    OBJCLASS_FOLDER      = 16,
+    OBJCLASS_COUNT       = 17,
     OBJCLASS_force_dword = u32(-1)
 };
 

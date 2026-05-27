@@ -100,6 +100,9 @@
     <Filter Include="Editor\Entry">
       <UniqueIdentifier>{e1eab5a1-4a06-4022-9557-bd1fb963953e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Editor\Entry\Folder">
+      <UniqueIdentifier>{6f0a7e02-3b1e-4d76-9ec7-2f3d9f0c4a11}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Editor\Entry\Glow">
       <UniqueIdentifier>{7bacbf40-6e4e-4393-afc1-b9f2f115a050}</UniqueIdentifier>
     </Filter>
@@ -150,6 +153,9 @@
     </Filter>
     <Filter Include="Editor\Tools\FogVolume">
       <UniqueIdentifier>{501eef64-3d8a-4f52-8c99-314a241eaf8a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Editor\Tools\Folder">
+      <UniqueIdentifier>{a32f7c25-7c8e-4b8f-9aa2-1f3e4d8b7c22}</UniqueIdentifier>
     </Filter>
     <Filter Include="Editor\Tools\Glow">
       <UniqueIdentifier>{efd02b2e-625e-4974-8133-0c691e36c090}</UniqueIdentifier>
@@ -365,6 +371,9 @@
     <ClCompile Include="Editor\Entry\Glow\glow.cpp">
       <Filter>Editor\Entry\Glow</Filter>
     </ClCompile>
+    <ClCompile Include="Editor\Entry\Folder\FolderObject.cpp">
+      <Filter>Editor\Entry\Folder</Filter>
+    </ClCompile>
     <ClCompile Include="Editor\Entry\Group\GroupObject.cpp">
       <Filter>Editor\Entry\Group</Filter>
     </ClCompile>
@@ -511,6 +520,9 @@
     </ClCompile>
     <ClCompile Include="Editor\Tools\Glow\ESceneGlowTools.cpp">
       <Filter>Editor\Tools\Glow</Filter>
+    </ClCompile>
+    <ClCompile Include="Editor\Tools\Folder\ESceneFolderTools.cpp">
+      <Filter>Editor\Tools\Folder</Filter>
     </ClCompile>
     <ClCompile Include="Editor\Tools\Group\ESceneGroupTools.cpp">
       <Filter>Editor\Tools\Group</Filter>
@@ -877,6 +889,9 @@
     <ClInclude Include="Editor\Entry\Glow\glow.h">
       <Filter>Editor\Entry\Glow</Filter>
     </ClInclude>
+    <ClInclude Include="Editor\Entry\Folder\FolderObject.h">
+      <Filter>Editor\Entry\Folder</Filter>
+    </ClInclude>
     <ClInclude Include="Editor\Entry\Group\GroupObject.h">
       <Filter>Editor\Entry\Group</Filter>
     </ClInclude>
@@ -954,6 +969,9 @@
     </ClInclude>
     <ClInclude Include="Editor\Tools\Glow\ESceneGlowTools.h">
       <Filter>Editor\Tools\Glow</Filter>
+    </ClInclude>
+    <ClInclude Include="Editor\Tools\Folder\ESceneFolderTools.h">
+      <Filter>Editor\Tools\Folder</Filter>
     </ClInclude>
     <ClInclude Include="Editor\Tools\Group\ESceneGroupTools.h">
       <Filter>Editor\Tools\Group</Filter>
