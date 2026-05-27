@@ -131,7 +131,20 @@ PropItem* UIPropertiesForm::FindItemOfName(shared_str name)
 
 void UIPropertiesForm::ClearProperties()
 {
-    VERIFY(!m_EditChooseValue);
+    // The PropItems we're about to destroy may be referenced by an open chooser
+    // or text editor. Cancel those handles so a later pump doesn't dereference a
+    // freed PropItem. Callers should also avoid rebuilding while IsEditingValue()
+    // is true (see CLevelTool::OnFrame deferral) — this is the second line of
+    // defence.
+    m_EditChooseValue      = nullptr;
+    m_EditTextureValue     = nullptr;
+    m_EditShortcutValue    = nullptr;
+    m_EditTextValueInitial = nullptr;
+    if (m_EditTextValueData)
+    {
+        xr_delete(m_EditTextValueData);
+        m_EditTextValueData = nullptr;
+    }
     for (PropItem* I: m_Items)
     {
         xr_delete(I);

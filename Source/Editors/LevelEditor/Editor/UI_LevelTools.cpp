@@ -402,7 +402,16 @@ void CLevelTool::OnFrame()
                 RealSetAction(ETAction(iNeedAction));
         }
         if (m_Flags.is(flUpdateProperties))
-            RealUpdateProperties();
+        {
+            // Defer the rebuild while any property form has a chooser/editor open.
+            // ClearProperties would delete the PropItem that the open chooser is
+            // bound to; the user-after-free would crash on the chooser OK click,
+            // or (with the safety null in ClearProperties) the chooser would
+            // silently close mid-session. The flag stays set so we re-attempt
+            // on the next idle tick once the chooser closes.
+            if (!m_WorldProps->IsEditingValue() && !m_Props->IsEditingValue())
+                RealUpdateProperties();
+        }
         if (m_Flags.is(flUpdateObjectList))
             RealUpdateObjectList();
         // TfrmEditLightAnim::OnIdle();

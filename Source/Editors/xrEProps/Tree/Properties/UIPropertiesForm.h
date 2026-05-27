@@ -33,6 +33,15 @@ public:
     {
         OnModifiedEvent = modif;
     }
+    // True while a chooser/editor is open and bound to one of our PropItems.
+    // Callers should NOT rebuild (ClearProperties + AssignItems) the property
+    // list while this is true — the open chooser holds a PropItem* that would
+    // become dangling.
+    bool IsEditingValue() const
+    {
+        return m_EditChooseValue || m_EditTextureValue || m_EditShortcutValue ||
+               m_EditTextValue || m_EditGameTypeValue;
+    }
 
     enum
     {
