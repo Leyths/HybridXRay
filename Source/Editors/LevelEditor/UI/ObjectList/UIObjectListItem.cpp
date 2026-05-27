@@ -59,6 +59,10 @@ void UIObjectListItem::Draw()
     // Folders render in a distinct warm amber so they stand out from regular
     // leaf rows even when empty (an empty folder uses the _Leaf flag and would
     // otherwise be indistinguishable from a normal object).
+    const bool dim_hidden = !Object->Visible();
+    if (dim_hidden)
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+
     if (is_folder)
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.78f, 0.32f, 1.00f));
 
@@ -66,6 +70,9 @@ void UIObjectListItem::Draw()
 
     if (is_folder)
         ImGui::PopStyleColor();
+
+    if (dim_hidden)
+        ImGui::PopStyleVar();
 
     // Persist collapse state for folders.
     if (is_folder && !Items.empty())

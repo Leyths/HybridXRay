@@ -20,7 +20,7 @@ static void VisitSelectedItems(UITreeItem* parent, Fn&& fn)
 UIObjectList* UIObjectList::Form = nullptr;
 UIObjectList::UIObjectList(): m_Root("")
 {
-    m_Mode      = M_Visible;
+    m_Mode      = M_All;
     m_Filter[0] = 0;
 }
 
