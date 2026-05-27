@@ -591,6 +591,10 @@ void CWayObject::MoveTo(const Fvector& pos, const Fvector& up)
                 (*it)->m_vPosition.add(diff);
         }
     }
+    // Keep FTransform in sync with the moved waypoint(s) so the ortho gizmo
+    // anchors on the live position; otherwise ImGuizmo emits cumulative deltas
+    // off a frozen anchor and the point flies off.
+    UpdateTransform(true);
 }
 
 void CWayObject::Move(Fvector& amount)
@@ -605,6 +609,35 @@ void CWayObject::Move(Fvector& amount)
     {
         for (WPIt it = m_WayPoints.begin(); it != m_WayPoints.end(); it++)
             (*it)->m_vPosition.add(amount);
+    }
+    UpdateTransform(true);
+}
+
+void CWayObject::OnUpdateTransform()
+{
+    inherited::OnUpdateTransform();
+
+    // In point mode, re-anchor FTransform on the first selected waypoint so the
+    // ortho gizmo draws on (and tracks) the point being edited. The base anchors
+    // on m_WayPoints.front() via GetPosition(), which is correct for the way-as-
+    // a-whole, but stale for a non-first selected point.
+    if (IsPointMode() && !m_WayPoints.empty())
+    {
+        CWayPoint* sel = nullptr;
+        for (WPIt it = m_WayPoints.begin(); it != m_WayPoints.end(); ++it)
+            if ((*it)->m_bSelected)
+            {
+                sel = *it;
+                break;
+            }
+        if (sel && sel != m_WayPoints.front())
+        {
+            FTransformP.translate(sel->m_vPosition);
+            FTransformRP.mul(FTransformP, FTransformR);
+            FTransform.mul(FTransformRP, FTransformS);
+            FITransformRP.invert(FTransformRP);
+            FITransform.invert(FTransform);
+        }
     }
 }
 

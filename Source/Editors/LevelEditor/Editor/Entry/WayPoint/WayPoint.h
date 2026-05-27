@@ -121,6 +121,8 @@ public:
         ;
     }
 
+    virtual void           OnUpdateTransform();
+
     virtual bool           GetBox(Fbox& box);
     virtual void           Render(int priority, bool strictB2F);
     virtual bool           RayPick(float& distance, const Fvector& S, const Fvector& D, SRayPickInfo* pinf = NULL);
