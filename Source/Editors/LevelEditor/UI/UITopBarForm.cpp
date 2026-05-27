@@ -206,6 +206,7 @@ void UITopBarForm::Draw()
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::SetTooltip("Build And Make"_RU >> u8"Обновить и сбилдить");
         }
+#if 0   // Run-on-engine buttons (current level + clean game) hidden
         ImGui::SameLine();
         m_tPlayPC->Load();
 
@@ -230,6 +231,7 @@ void UITopBarForm::Draw()
             ImGui::SetTooltip("Run a clean game on the engine outside of the editor."_RU >> u8"Запустить чистую игру, на движке вне редактора.");
         }
         ImGui::SameLine();
+#endif
 
         if (LTools->IsCompilerRunning() || LTools->IsGameRunning())
         {
