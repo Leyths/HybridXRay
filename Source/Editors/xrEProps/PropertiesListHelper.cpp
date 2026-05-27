@@ -267,11 +267,15 @@ RTextValue* CPropHelper::CreateNameCB(PropItemVec& items, shared_str key, shared
 
 void CPropHelper::FvectorRDOnBeforeEdit(PropValue* sender, Fvector& edit_val)
 {
+    // Convert the edit-buffer copy only. The previous code also rad2deg'd
+    // V->lim_mn / lim_mx in-place, paired with a deg2rad in OnAfterEdit -
+    // but BeforeEdit runs every DrawProp frame and AfterEdit only runs on
+    // change=true, so idle frames kept multiplying the limits by 57.3
+    // until they overflowed to inf. After that, every +/- click clamped
+    // the value to inf via NumericValue::ApplyValue's clamp(val, lim_mn,
+    // lim_mx). Limits are radians always; ApplyValue's clamp does the
+    // bounds check in radian space after this function's deg2rad inverse.
     edit_val.set(rad2deg(edit_val.x), rad2deg(edit_val.y), rad2deg(edit_val.z));
-    VectorValue* V = dynamic_cast<VectorValue*>(sender);
-    R_ASSERT(V);
-    V->lim_mn.set(rad2deg(V->lim_mn.x), rad2deg(V->lim_mn.y), rad2deg(V->lim_mn.z));
-    V->lim_mx.set(rad2deg(V->lim_mx.x), rad2deg(V->lim_mx.y), rad2deg(V->lim_mx.z));
 }
 void CPropHelper::FvectorRDOnDraw(PropValue* sender, xr_string& draw_val)
 {
@@ -284,21 +288,15 @@ void CPropHelper::FvectorRDOnDraw(PropValue* sender, xr_string& draw_val)
 bool CPropHelper::FvectorRDOnAfterEdit(PropValue* sender, Fvector& edit_val)
 {
     edit_val.set(deg2rad(edit_val.x), deg2rad(edit_val.y), deg2rad(edit_val.z));
-    VectorValue* V = dynamic_cast<VectorValue*>(sender);
-    R_ASSERT(V);
-    V->lim_mn.set(deg2rad(V->lim_mn.x), deg2rad(V->lim_mn.y), deg2rad(V->lim_mn.z));
-    V->lim_mx.set(deg2rad(V->lim_mx.x), deg2rad(V->lim_mx.y), deg2rad(V->lim_mx.z));
     return true;
 }
 //------------------------------------------------------------------------------
 
 void CPropHelper::floatRDOnBeforeEdit(PropValue* sender, float& edit_val)
 {
-    edit_val      = rad2deg(edit_val);
-    FloatValue* V = dynamic_cast<FloatValue*>(sender);
-    R_ASSERT(V);
-    V->lim_mn = rad2deg(V->lim_mn);
-    V->lim_mx = rad2deg(V->lim_mx);
+    // See FvectorRDOnBeforeEdit comment - same idle-frame limit drift bug
+    // when this function also touched V->lim_mn / lim_mx in place.
+    edit_val = rad2deg(edit_val);
 }
 void CPropHelper::floatRDOnDraw(PropValue* sender, xr_string& draw_val)
 {
@@ -310,11 +308,7 @@ void CPropHelper::floatRDOnDraw(PropValue* sender, xr_string& draw_val)
 }
 bool CPropHelper::floatRDOnAfterEdit(PropValue* sender, float& edit_val)
 {
-    edit_val      = deg2rad(edit_val);
-    FloatValue* V = dynamic_cast<FloatValue*>(sender);
-    R_ASSERT(V);
-    V->lim_mn = deg2rad(V->lim_mn);
-    V->lim_mx = deg2rad(V->lim_mx);
+    edit_val = deg2rad(edit_val);
     return true;
 }
 //------------------------------------------------------------------------------

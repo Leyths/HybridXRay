@@ -43,14 +43,16 @@ template<> inline bool DrawNumeric<float>(PropItem* item, bool& change, bool rea
     change = ImGui::InputFloat("##value", &temp, 0.01, 0.1, V->dec, read_only ? ImGuiInputTextFlags_ReadOnly : 0);
     if (change)
     {
-        if (!isinf(V->lim_mn) && V->lim_mn > temp)
-            temp = V->lim_mn;
-        if (!isinf(V->lim_mx) && V->lim_mx < temp)
-            temp = V->lim_mx;
+        // No clamp here: temp is in display units (e.g. degrees for angle
+        // props); V->lim_mn/lim_mx are in storage units (radians). AfterEdit
+        // converts temp back to storage units, then NumericValue::ApplyValue
+        // clamps against lim_mn/lim_mx in matching units. The previous
+        // in-place clamp here paired with PropertiesListHelper.cpp mutating
+        // the limits during BeforeEdit/AfterEdit; that pairing drifted the
+        // limits to inf on idle frames (BeforeEdit runs every frame,
+        // AfterEdit only on change), bricking angle fields.
         if (item->AfterEdit<NumericValue<float>, float>(temp) && !read_only)
-        {
             change = item->ApplyValue<NumericValue<float>, float>(temp);
-        }
     }
     return true;
 }
@@ -225,18 +227,11 @@ void UIPropertiesItem::DrawProp()
             float vector[3] = {edit_val.x, edit_val.y, edit_val.z};
             if (ImGui::InputFloat3("##value", vector, V->dec))
             {
-                for (int i = 0; i < 3; i++)
-                {
-                    if (V->lim_mn[i] > vector[i])
-                    {
-                        vector[i] = V->lim_mn[i];
-                    }
-                    else if (V->lim_mx[i] < vector[i])
-                    {
-                        vector[i] = V->lim_mx[i];
-                    }
-                    edit_val[i] = vector[i];
-                }
+                edit_val.set(vector[0], vector[1], vector[2]);
+                // Don't clamp here: see DrawNumeric<float>'s comment. The
+                // VectorValue inherits NumericValue<Fvector>'s ApplyValue,
+                // which clamps in storage units after AfterEdit's deg2rad
+                // for angle vectors.
                 if (PItem->AfterEdit<VectorValue, Fvector>(edit_val))
                 {
                     if (PItem->ApplyValue<VectorValue, Fvector>(edit_val))
