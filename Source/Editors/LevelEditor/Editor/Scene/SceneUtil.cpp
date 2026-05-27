@@ -66,37 +66,64 @@ bool EScene::FindDuplicateName()
 
 void EScene::GenObjectName(ObjClassID cls_id, char* buffer, const char* pref)
 {
-    for (int i = 0; true; i++)
+    // Split pref into a base and a trailing "_NN" numeric suffix, if present.
+    // With a suffix, paste/clone walks forward from the source number
+    // (abc_04 -> abc_05 -> abc_06 ...) instead of appending _00 every time.
+    // Without a suffix, fall back to the old behaviour: try the bare name,
+    // then append _00, _01, ...
+    xr_string base;
+    int       start_n    = 0;
+    bool      has_suffix = false;
+
+    if (pref && pref[0])
     {
-        bool      result;
-        xr_string temp;
-        if (pref && pref[0])
+        size_t len = xr_strlen(pref);
+        size_t i   = len;
+        while (i > 0 && isdigit((unsigned char)pref[i - 1]))
+            --i;
+        if (i < len && i > 0 && pref[i - 1] == '_')
         {
-            if (i == 0)
-            {
-                temp = pref;
-            }
-            else
-            {
-                temp.sprintf("%s_%02d", pref, i - 1);
-            }
+            base.assign(pref, i - 1);
+            start_n    = atoi(pref + i);
+            has_suffix = true;
         }
         else
         {
-            ESceneCustomOTool* ot = GetOTool(cls_id);
-            VERIFY(ot);
-            temp.sprintf("%s_%02d", ot->ClassName(), i);
+            base = pref;
+        }
+    }
+    else
+    {
+        ESceneCustomOTool* ot = GetOTool(cls_id);
+        VERIFY(ot);
+        base = ot->ClassName();
+    }
+
+    for (int k = 0; true; ++k)
+    {
+        xr_string temp;
+        if (has_suffix)
+        {
+            temp.sprintf("%s_%02d", base.c_str(), start_n + k);
+        }
+        else if (pref && pref[0])
+        {
+            if (k == 0)
+                temp = pref;
+            else
+                temp.sprintf("%s_%02d", base.c_str(), k - 1);
+        }
+        else
+        {
+            temp.sprintf("%s_%02d", base.c_str(), k);
         }
 
-        FindObjectByNameCB(temp.c_str(), result);
-        if (!result)
+        bool exists;
+        FindObjectByNameCB(temp.c_str(), exists);
+        if (!exists)
         {
             xr_strcpy(buffer, 256, temp.c_str());
             return;
         }
     }
-    /*ESceneCustomOTool* ot = GetOTool(cls_id); VERIFY(ot);
-    xr_string result	=
-    FHelper.GenerateName(pref&&pref[0]?pref:ot->ClassName(),4,fastdelegate::bind<TFindObjectByName>(this,&EScene::FindObjectByNameCB),true,true);
-    strcpy				(buffer,result.c_str());*/
 }
