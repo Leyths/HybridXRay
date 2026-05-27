@@ -165,6 +165,14 @@ PropItem* UIPropertiesForm::FindItem(const char* name)
 
 void UIPropertiesForm::DrawEditText()
 {
+    // If the popup is no longer open but m_EditTextValue is still set, the
+    // editing session ended (Cancel/Ok/click-outside) — clear the pointer so
+    // IsEditingValue() returns false and the panel can refresh again. Without
+    // this, m_EditTextValue stays bound to the last text item indefinitely and
+    // RealUpdateProperties gets deferred forever.
+    if (m_EditTextValue && !ImGui::IsPopupOpen("EditText", 0))
+        m_EditTextValue = nullptr;
+
     if (ImGui::BeginPopupContextItem("EditText", 0))
     {
         R_ASSERT(m_EditTextValueData);

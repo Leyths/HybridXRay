@@ -524,8 +524,8 @@ void UIPropertiesItem::DrawProp()
                 PropertiesFrom->m_EditTextValueData     = xr_strdup(V->GetValue());
                 PropertiesFrom->m_EditTextValueInitial  = xr_strdup(V->GetValue());
                 PropertiesFrom->m_EditTextValueDataSize = xr_strlen(PropertiesFrom->m_EditTextValueData) + 1;
+                PropertiesFrom->m_EditTextValue         = PItem;
             }
-            PropertiesFrom->m_EditTextValue = PItem;
             PropertiesFrom->DrawEditText();
         }
         break;
@@ -556,8 +556,8 @@ void UIPropertiesItem::DrawProp()
                 PropertiesFrom->m_EditTextValueData     = xr_strdup(V->GetValue().c_str() ? V->GetValue().c_str() : "");
                 PropertiesFrom->m_EditTextValueInitial  = xr_strdup(V->GetValue().c_str() ? V->GetValue().c_str() : "");
                 PropertiesFrom->m_EditTextValueDataSize = xr_strlen(PropertiesFrom->m_EditTextValueData) + 1;
+                PropertiesFrom->m_EditTextValue         = PItem;
             }
-            PropertiesFrom->m_EditTextValue = PItem;
             PropertiesFrom->DrawEditText();
         }
         break;
@@ -589,8 +589,8 @@ void UIPropertiesItem::DrawProp()
                 PropertiesFrom->m_EditTextValueData     = xr_strdup(V->GetValue().c_str());
                 PropertiesFrom->m_EditTextValueInitial  = xr_strdup(V->GetValue().c_str());
                 PropertiesFrom->m_EditTextValueDataSize = xr_strlen(PropertiesFrom->m_EditTextValueData) + 1;
+                PropertiesFrom->m_EditTextValue         = PItem;
             }
-            PropertiesFrom->m_EditTextValue = PItem;
             PropertiesFrom->DrawEditText();
         }
         break;
