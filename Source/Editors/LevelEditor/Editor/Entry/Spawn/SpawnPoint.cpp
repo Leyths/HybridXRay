@@ -513,16 +513,22 @@ void CSpawnPoint::SSpawnData::Render(bool bSelected, const Fmatrix& parent, int 
 
     if (bSelected)
     {
-        xr_vector<CLE_Visual*>::iterator it   = m_VisualHelpers.begin();
-        xr_vector<CLE_Visual*>::iterator it_e = m_VisualHelpers.end();
-        Fmatrix                          M;
-        u32                              idx = 0;
-        for (; it != it_e; ++it, ++idx)
+        // Bound to whichever is smaller — our cached helpers or what the
+        // class currently reports — and bail if the class returns a null
+        // collection pointer (some malformed entries do).
+        visual_data* vc_base  = m_Data->visual_collection();
+        u32          vc_count = m_Data->visual_collection_size();
+        if (vc_base && vc_count > 0)
         {
-            visual_data* vc = m_Data->visual_collection() + idx;
-            M.mul(parent, vc->matrix);
-            CLE_Visual* v = *it;
-            ::RImplementation.model_Render(v->visual, M, priority, strictB2F, 1.f);
+            u32     max_iter = std::min<u32>((u32)m_VisualHelpers.size(), vc_count);
+            Fmatrix M;
+            for (u32 idx = 0; idx < max_iter; ++idx)
+            {
+                visual_data* vc = vc_base + idx;
+                M.mul(parent, vc->matrix);
+                CLE_Visual* v = m_VisualHelpers[idx];
+                ::RImplementation.model_Render(v->visual, M, priority, strictB2F, 1.f);
+            }
         }
     }
 }
@@ -569,12 +575,15 @@ void CSpawnPoint::SSpawnData::OnFrame()
         u32          cnt = m_Data->visual_collection_size();
         visual_data* vc  = m_Data->visual_collection();
 
-        for (u32 i = 0; i < cnt; ++i, ++vc)
+        if (vc)
         {
-            CLE_Visual* V = xr_new<CLE_Visual>(vc->visual);
-            V->OnChangeVisual();
-            m_VisualHelpers.push_back(V);
-            V->PlayAnimation();
+            for (u32 i = 0; i < cnt; ++i, ++vc)
+            {
+                CLE_Visual* V = xr_new<CLE_Visual>(vc->visual);
+                V->OnChangeVisual();
+                m_VisualHelpers.push_back(V);
+                V->PlayAnimation();
+            }
         }
     }
 
@@ -1471,22 +1480,33 @@ void CSpawnPoint::OnFillRespawnItemProfile(ChooseValue* val)
     }
 }
 
+// The three lookups below used to VERIFY that the spawn's CLASS_ID was
+// registered with the editor's spawn tool. VERIFY is a no-op in Release, so
+// for legacy spawn.part files that contain objects whose class never declared
+// `$spawn` in its section (e.g. obj_climable / clmbl#N entries that were
+// imported by accident), the next line dereferenced end() and SEH-faulted
+// the editor on selection. Treat the missing-class case as "no profile" so
+// the user can still inspect the object's base properties and delete it.
 void CSpawnPoint::OnFillChooseItems(ChooseValue* val)
 {
     ESceneSpawnTool* st = dynamic_cast<ESceneSpawnTool*>(FParentTools);
-    VERIFY(st);
+    if (!st)
+        return;
     CLASS_ID                         cls_id = m_SpawnData.m_ClassID;
     ESceneSpawnTool::ClassSpawnMapIt cls_it = st->m_Classes.find(cls_id);
-    VERIFY(cls_it != st->m_Classes.end());
+    if (cls_it == st->m_Classes.end())
+        return;
     *val->m_Items = cls_it->second;
 }
 
 shared_str CSpawnPoint::SectionToEditor(shared_str nm)
 {
     ESceneSpawnTool* st = dynamic_cast<ESceneSpawnTool*>(FParentTools);
-    VERIFY(st);
+    if (!st)
+        return 0;
     ESceneSpawnTool::ClassSpawnMapIt cls_it = st->m_Classes.find(m_SpawnData.m_ClassID);
-    VERIFY(cls_it != st->m_Classes.end());
+    if (cls_it == st->m_Classes.end())
+        return 0;
     for (ESceneSpawnTool::SSVecIt ss_it = cls_it->second.begin(); ss_it != cls_it->second.end(); ++ss_it)
         if (nm.equal(ss_it->hint))
             return ss_it->name;
@@ -1496,9 +1516,11 @@ shared_str CSpawnPoint::SectionToEditor(shared_str nm)
 shared_str CSpawnPoint::EditorToSection(shared_str nm)
 {
     ESceneSpawnTool* st = dynamic_cast<ESceneSpawnTool*>(FParentTools);
-    VERIFY(st);
+    if (!st)
+        return 0;
     ESceneSpawnTool::ClassSpawnMapIt cls_it = st->m_Classes.find(m_SpawnData.m_ClassID);
-    VERIFY(cls_it != st->m_Classes.end());
+    if (cls_it == st->m_Classes.end())
+        return 0;
     for (ESceneSpawnTool::SSVecIt ss_it = cls_it->second.begin(); ss_it != cls_it->second.end(); ++ss_it)
         if (nm.equal(ss_it->name))
             return ss_it->hint;
