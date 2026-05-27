@@ -1,5 +1,22 @@
 #include "stdafx.h"
 
+// Walk the UI tree depth-first and invoke `fn` on every selected
+// UIObjectListItem. Used by the Object List panel buttons so they can affect
+// items that live inside folders (which are not in m_Root.Items directly).
+template <class Fn>
+static void VisitSelectedItems(UITreeItem* parent, Fn&& fn)
+{
+    if (!parent)
+        return;
+    for (UITreeItem* Item: parent->Items)
+    {
+        UIObjectListItem* RItem = static_cast<UIObjectListItem*>(Item);
+        if (RItem->bIsSelected && RItem->Object)
+            fn(RItem);
+        VisitSelectedItems(Item, fn);
+    }
+}
+
 UIObjectList* UIObjectList::Form = nullptr;
 UIObjectList::UIObjectList(): m_Root("")
 {
@@ -57,32 +74,22 @@ void UIObjectList::Draw()
         ImGui::Separator();
         if (ImGui::Button("Show Selected"_RU >> u8"Показать выбранное", ImVec2(-1, 0)))
         {
-            for (UITreeItem* Item: m_Root.Items)
-            {
-                UIObjectListItem* RItem = (UIObjectListItem*)Item;
-                if (RItem->bIsSelected && RItem->Object)
-                {
-                    RItem->Object->Show(TRUE);
-                    if (RItem->Object->FClassID == OBJCLASS_FOLDER)
-                        ((CFolderObject*)RItem->Object)->PropagateShow(true);
-                }
-            }
+            VisitSelectedItems(&m_Root, [](UIObjectListItem* RItem) {
+                RItem->Object->Show(TRUE);
+                if (RItem->Object->FClassID == OBJCLASS_FOLDER)
+                    ((CFolderObject*)RItem->Object)->PropagateShow(true);
+            });
         }
         if (ImGui::IsItemHovered())
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
         if (ImGui::Button("Hide Selected"_RU >> u8"Скрыть выбранное", ImVec2(-1, 0)))
         {
-            for (UITreeItem* Item: m_Root.Items)
-            {
-                UIObjectListItem* RItem = (UIObjectListItem*)Item;
-                if (RItem->bIsSelected && RItem->Object)
-                {
-                    RItem->Object->Show(FALSE);
-                    if (RItem->Object->FClassID == OBJCLASS_FOLDER)
-                        ((CFolderObject*)RItem->Object)->PropagateShow(false);
-                }
-            }
+            VisitSelectedItems(&m_Root, [](UIObjectListItem* RItem) {
+                RItem->Object->Show(FALSE);
+                if (RItem->Object->FClassID == OBJCLASS_FOLDER)
+                    ((CFolderObject*)RItem->Object)->PropagateShow(false);
+            });
         }
         if (ImGui::IsItemHovered())
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -90,18 +97,12 @@ void UIObjectList::Draw()
         ImGui::Separator();
         if (ImGui::Button("Focus on Selected"_RU >> u8"Фокус на выбранном", ImVec2(-1, 0)))
         {
-            for (UITreeItem* Item: m_Root.Items)
-            {
-                UIObjectListItem* RItem = (UIObjectListItem*)Item;
-                if (RItem->bIsSelected)
-                {
-                    RItem->Object->Select(true);
-
-                    Fbox bb;
-                    if (RItem->Object->GetBox(bb))
-                        EDevice->m_Camera.ZoomExtents(bb);
-                }
-            }
+            VisitSelectedItems(&m_Root, [](UIObjectListItem* RItem) {
+                RItem->Object->Select(true);
+                Fbox bb;
+                if (RItem->Object->GetBox(bb))
+                    EDevice->m_Camera.ZoomExtents(bb);
+            });
         }
         if (ImGui::IsItemHovered())
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -150,6 +151,28 @@ void UIObjectList::Show()
 void UIObjectList::Close()
 {
     xr_delete(Form);
+}
+
+// Sort each parent's children so that folders appear first (alphabetically by
+// name), followed by leaf objects in their original order. Recursive across the
+// whole tree.
+static void SortFoldersFirst(UITreeItem* parent)
+{
+    if (!parent)
+        return;
+    std::stable_sort(parent->Items.begin(), parent->Items.end(), [](UITreeItem* a, UITreeItem* b) {
+        UIObjectListItem* ia       = static_cast<UIObjectListItem*>(a);
+        UIObjectListItem* ib       = static_cast<UIObjectListItem*>(b);
+        bool              a_folder = ia->Object && ia->Object->FClassID == OBJCLASS_FOLDER;
+        bool              b_folder = ib->Object && ib->Object->FClassID == OBJCLASS_FOLDER;
+        if (a_folder != b_folder)
+            return a_folder;   // folders first
+        if (a_folder)          // both folders — alphabetical
+            return _stricmp(ia->Name.c_str(), ib->Name.c_str()) < 0;
+        return false;          // both leaves — preserve insertion order (stable sort)
+    });
+    for (UITreeItem* child: parent->Items)
+        SortFoldersFirst(child);
 }
 
 void UIObjectList::Refresh()
@@ -263,6 +286,7 @@ void UIObjectList::Refresh()
         }
     }
 
+    SortFoldersFirst(&Form->m_Root);
     Form->m_LastSelected = nullptr;
 }
 

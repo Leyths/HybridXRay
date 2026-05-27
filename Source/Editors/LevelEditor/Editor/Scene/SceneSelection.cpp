@@ -146,6 +146,28 @@ void EScene::ShowObjects(bool flag, ObjClassID classfilter, bool bAllowSelection
         ESceneToolBase* mt = GetTool(classfilter);
         if (mt)
             mt->ShowObjects(flag, bAllowSelectionFlag, bSelFlag);
+
+        // Folders are class-agnostic organisational containers stored in their
+        // own OBJCLASS_FOLDER tool, so the per-class iteration above misses
+        // them. Without this fan-out, hiding a folder and then choosing
+        // "Show All" would unhide the class's regular objects but leave the
+        // folder rows themselves hidden.
+        if (classfilter != (ObjClassID)OBJCLASS_FOLDER)
+        {
+            ESceneCustomOTool* fot = dynamic_cast<ESceneCustomOTool*>(GetTool(OBJCLASS_FOLDER));
+            if (fot)
+            {
+                for (CCustomObject* Obj: fot->GetObjects())
+                {
+                    CFolderObject* fo = (CFolderObject*)Obj;
+                    if (fo->GetFolderClass() != classfilter)
+                        continue;
+                    if (bAllowSelectionFlag && fo->Selected() != bSelFlag)
+                        continue;
+                    fo->Show(flag ? TRUE : FALSE);
+                }
+            }
+        }
     }
     UI->RedrawScene();
 }

@@ -56,14 +56,16 @@ void UIObjectListItem::Draw()
     if (bIsSelected)
         Flags |= ImGuiTreeNodeFlags_Selected;
 
-    // Prefix folders with a small marker so they're visually distinct.
-    string256 label;
+    // Folders render in a distinct warm amber so they stand out from regular
+    // leaf rows even when empty (an empty folder uses the _Leaf flag and would
+    // otherwise be indistinguishable from a normal object).
     if (is_folder)
-        sprintf(label, "[F] %s", Name.c_str());
-    else
-        sprintf(label, "%s", Name.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.78f, 0.32f, 1.00f));
 
-    bool node_open = ImGui::TreeNodeEx(label, Flags);
+    bool node_open = ImGui::TreeNodeEx(Name.c_str(), Flags);
+
+    if (is_folder)
+        ImGui::PopStyleColor();
 
     // Persist collapse state for folders.
     if (is_folder && !Items.empty())
