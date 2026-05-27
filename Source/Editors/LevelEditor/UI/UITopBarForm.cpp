@@ -150,6 +150,7 @@ void UITopBarForm::Draw()
                 ClickTerminated();
             }
         }
+#if 0   // Play In Editor button hidden
         else
         {
             m_tPlayInEditor->Load();
@@ -163,6 +164,7 @@ void UITopBarForm::Draw()
                 ImGui::SetTooltip("Play In Editor"_RU >> u8"Играть в Редакторе(inGame)");
             }
         }
+#endif
         ImGui::SameLine();
         {
             ImGui::SameLine(0, 4);

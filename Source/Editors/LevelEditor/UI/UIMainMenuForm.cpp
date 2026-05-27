@@ -181,6 +181,7 @@ void UIMainMenuForm::Draw()
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+#if 0   // Compile -> Compile submenu hidden
             bool bDisable = false;
             if (LTools->IsCompilerRunning() || LTools->IsGameRunning())
             {
@@ -252,6 +253,7 @@ void UIMainMenuForm::Draw()
             {
                 ImGui::EndDisabled();
             }
+#endif
             ImGui::Separator();
             if (ImGui::MenuItem("Import Error List"_RU >> u8"Импорт списка ошибок", ""))
             {
