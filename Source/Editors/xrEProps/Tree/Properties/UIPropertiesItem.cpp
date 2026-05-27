@@ -145,8 +145,18 @@ void UIPropertiesItem::DrawItem()
                     ImGui::TextDisabled(PItem->GetDrawText().c_str());
                 }
             }
-            else if (PItem->m_Flags.test(PropItem::flMixed) && !PItem->m_Flags.test(PropItem::flIgnoreMixed))
+            else if (PItem->m_Flags.test(PropItem::flMixed) && !PItem->m_Flags.test(PropItem::flIgnoreMixed) &&
+                     type != PROP_RTEXT && type != PROP_STEXT && type != PROP_CTEXT)
             {
+                // Text types skip the (Mixed) button and fall through to
+                // DrawProp. Their button label is already "(mixed)..." via
+                // PropItem::GetDrawText, so clicking it opens the same edit
+                // popup as a normal-state click — the OK handler then calls
+                // ApplyValue across every selected object, where per-object
+                // OnNameChange (for the Name field) auto-suffixes collisions.
+                // Without this shortcut the user couldn't type a fresh name
+                // for a bulk rename — clicking (Mixed) would just propagate
+                // values.front() to all.
                 if (ImGui::Button("(Mixed)", ImVec2(-1, 0)))
                 {
                     RemoveMixed();

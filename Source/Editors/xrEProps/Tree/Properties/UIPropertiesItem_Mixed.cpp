@@ -231,36 +231,37 @@ void UIPropertiesItem::RemoveMixed()
         case PROP_STEXT:
         case PROP_CTEXT:
         {
-            CTextValue* V1 = dynamic_cast<CTextValue*>(PropertiesFrom->m_EditTextValue->GetFrontValue());
-            RTextValue* V2 = dynamic_cast<RTextValue*>(PropertiesFrom->m_EditTextValue->GetFrontValue());
-            STextValue* V3 = dynamic_cast<STextValue*>(PropertiesFrom->m_EditTextValue->GetFrontValue());
+            // The (Mixed) button can fire before any EditText popup has been
+            // opened, so don't lean on m_EditTextValue (it's a popup-state
+            // pointer, null in the no-popup case). Operate on PItem directly
+            // and seed from values.front(), matching every other branch.
+            PropValue*  V  = PItem->GetFrontValue();
+            CTextValue* V1 = dynamic_cast<CTextValue*>(V);
+            RTextValue* V2 = dynamic_cast<RTextValue*>(V);
+            STextValue* V3 = dynamic_cast<STextValue*>(V);
             if (V1)
             {
-                xr_string out = PItem->GetDrawText();
-                if (PropertiesFrom->m_EditTextValue->AfterEdit<CTextValue, xr_string>(out))
-                {
-                    if (PropertiesFrom->m_EditTextValue->ApplyValue<CTextValue, LPCSTR>(out.c_str()))
+                xr_string edit_val = V1->GetValue();
+                PItem->BeforeEdit<CTextValue, xr_string>(edit_val);
+                if (PItem->AfterEdit<CTextValue, xr_string>(edit_val))
+                    if (PItem->ApplyValue<CTextValue, LPCSTR>(edit_val.c_str()))
                         change = true;
-                }
             }
             else if (V2)
             {
-                shared_str out = PItem->GetDrawText().c_str();
-                if (PropertiesFrom->m_EditTextValue->AfterEdit<RTextValue, shared_str>(out))
-                {
-                    if (PropertiesFrom->m_EditTextValue->ApplyValue<RTextValue, shared_str>(out))
+                shared_str edit_val = V2->GetValue();
+                PItem->BeforeEdit<RTextValue, shared_str>(edit_val);
+                if (PItem->AfterEdit<RTextValue, shared_str>(edit_val))
+                    if (PItem->ApplyValue<RTextValue, shared_str>(edit_val))
                         change = true;
-                }
             }
             else if (V3)
             {
-                xr_string out = PItem->GetDrawText();
-                ;
-                if (PropertiesFrom->m_EditTextValue->AfterEdit<STextValue, xr_string>(out))
-                {
-                    if (PropertiesFrom->m_EditTextValue->ApplyValue<STextValue, xr_string>(out))
+                xr_string edit_val = V3->GetValue();
+                PItem->BeforeEdit<STextValue, xr_string>(edit_val);
+                if (PItem->AfterEdit<STextValue, xr_string>(edit_val))
+                    if (PItem->ApplyValue<STextValue, xr_string>(edit_val))
                         change = true;
-                }
             }
             else
                 R_ASSERT(false);

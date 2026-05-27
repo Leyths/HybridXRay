@@ -258,8 +258,9 @@ RTextValue* CPropHelper::CreateNameCB(PropItemVec& items, shared_str key, shared
     V->OnAfterEditEvent         = after;
     V->OnBeforeEditEvent        = before;
     V->Owner()->OnDrawTextEvent = draw;
-    if (V->Owner()->m_Flags.is(PropItem::flMixed))
-        V->Owner()->m_Flags.set(PropItem::flDisabled, TRUE);
+    // No flDisabled-on-flMixed gate here: the CB owner is responsible for
+    // disambiguating multi-applies in OnAfterEdit/OnChange (see CCustomObject::
+    // OnNameChange's GenObjectName path). Disabling would block bulk rename.
     return V;
 }
 //---------------------------------------------------------------------------

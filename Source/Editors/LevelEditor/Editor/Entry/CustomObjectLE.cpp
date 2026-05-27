@@ -192,9 +192,11 @@ bool CCustomObject::OnObjectNameAfterEdit(PropValue* sender, shared_str& edit_va
         return false;
     xr_string temp = edit_val.c_str();
     xr_strlwr(temp);
-
     edit_val = temp.c_str();
-    return !Scene->FindObjectByName(edit_val.c_str(), (CCustomObject*)0);
+    // Uniqueness is enforced per-object in OnNameChange (auto-suffix via
+    // Scene->GenObjectName). Always accept here so PropItem::ApplyValue can
+    // walk every selected object and let each disambiguate against its peers.
+    return true;
 }
 
 void CCustomObject::OnNumChangePosition(PropValue* sender)
@@ -211,7 +213,22 @@ void CCustomObject::OnNumChangeScale(PropValue* sender)
 }
 void CCustomObject::OnNameChange(PropValue* sender)
 {
-    SetName(EName.c_str());
+    // FindObjectByName(name, this) excludes self. When ApplyValue iterates
+    // multi-select, by the Nth callback the previous N-1 siblings already own
+    // their finalized names in the scene, so GenObjectName produces
+    // base / base_00 / base_01 / ... without further coordination.
+    LPCSTR desired = EName.c_str();
+    if (Scene->FindObjectByName(desired, this))
+    {
+        string256 buf;
+        Scene->GenObjectName(FClassID, buf, desired);
+        EName = buf;
+        SetName(buf);
+    }
+    else
+    {
+        SetName(desired);
+    }
     ExecCommand(COMMAND_UPDATE_PROPERTIES);
 }
 
