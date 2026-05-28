@@ -8,6 +8,29 @@ UIObjectListItem::UIObjectListItem(shared_str Name): UITreeItem(Name, {})
 
 UIObjectListItem::~UIObjectListItem() {}
 
+// True if this item's name matches the active filter, or — for folders — if any
+// descendant does. Without the recursive lookahead, a folder whose own name
+// doesn't contain the filter substring would `return` early in Draw() and take
+// every matching child down with it. That made the search box useless for any
+// item that lived inside a folder.
+bool UIObjectListItem::MatchesFilterRecursive(UIObjectListItem* item)
+{
+    if (!item || !item->Object)
+        return false;
+    const char* filter = UIObjectList::Form->m_Filter;
+    if (filter[0] == 0)
+        return true;
+    const char* name = item->Object->GetName();
+    if (name && strstr(name, filter) != 0)
+        return true;
+    for (UITreeItem* child: item->Items)
+    {
+        if (MatchesFilterRecursive(static_cast<UIObjectListItem*>(child)))
+            return true;
+    }
+    return false;
+}
+
 void UIObjectListItem::Draw()
 {
     if (!Object)
@@ -15,7 +38,10 @@ void UIObjectListItem::Draw()
 
     if (UIObjectList::Form->m_Filter[0])
     {
-        if (strstr(Object->GetName(), UIObjectList::Form->m_Filter) == 0)
+        // For leaves this collapses to the original name-match test. For folders
+        // it lets the row through if any descendant matches, so the parent chain
+        // up to a hit stays visible.
+        if (!MatchesFilterRecursive(this))
             return;
     }
     switch (UIObjectList::Form->m_Mode)
@@ -40,11 +66,17 @@ void UIObjectListItem::Draw()
     ImGui::TableNextColumn();
 
     ImGuiTreeNodeFlags Flags = 0;
+    const bool         filter_active = UIObjectList::Form->m_Filter[0] != 0;
     if (is_folder && !Items.empty())
     {
         Flags |= ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
         CFolderObject* fo = (CFolderObject*)Object;
-        ImGui::SetNextItemOpen(!fo->IsCollapsed());
+        // When a filter is active force the folder open so its matching descendants
+        // are actually visible. The persisted collapse state is untouched (we just
+        // override the visual open state for this frame) so clearing the filter
+        // restores whatever the user had before.
+        const bool force_open = filter_active;
+        ImGui::SetNextItemOpen(force_open || !fo->IsCollapsed());
     }
     else
     {
@@ -88,9 +120,12 @@ void UIObjectListItem::Draw()
         if (ImGui::GetIO().KeyShift)
         {
             bool bStart = UIObjectList::Form->m_LastSelected && UIObjectList::Form->m_LastSelected->Owner == Owner;
+            // Disable shift-range only when the endpoint is genuinely *not visible*
+            // under the active filter. Use the recursive match so a folder that's
+            // visible because a descendant matches still works as a range endpoint.
             if (UIObjectList::Form->m_Filter[0] && UIObjectList::Form->m_LastSelected && UIObjectList::Form->m_LastSelected->Object)
             {
-                if (strstr(UIObjectList::Form->m_LastSelected->Object->GetName(), UIObjectList::Form->m_Filter) == 0)
+                if (!MatchesFilterRecursive(UIObjectList::Form->m_LastSelected))
                     bStart = false;
             }
             if (bStart)
@@ -129,9 +164,11 @@ void UIObjectListItem::Draw()
                     for (size_t i = StartIndex; i < EndIndex; i++)
                     {
                         UIObjectListItem* RItem = (UIObjectListItem*)Owner->Items[i];
+                        // Mirror the Draw-time visibility rule: rows hidden by the
+                        // filter aren't selectable; folders visible-by-descendant are.
                         if (UIObjectList::Form->m_Filter[0])
                         {
-                            if (strstr(RItem->Object->GetName(), UIObjectList::Form->m_Filter) == 0)
+                            if (!MatchesFilterRecursive(RItem))
                                 continue;
                         }
                         RItem->Object->Select(true);
