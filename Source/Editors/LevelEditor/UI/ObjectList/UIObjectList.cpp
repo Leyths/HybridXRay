@@ -323,24 +323,74 @@ void UIObjectList::CreateFolderForCurrentClass()
     Refresh();
 }
 
-void UIObjectList::ReparentSelectedTo(CFolderObject* target)
+// True if `maybe_ancestor` appears in obj's m_pOwnerObject chain.
+static bool IsAncestor(CCustomObject* maybe_ancestor, CCustomObject* obj)
 {
-    if (Form == nullptr)
-        return;
+    if (!maybe_ancestor || !obj)
+        return false;
+    for (CCustomObject* p = obj->m_pOwnerObject; p; p = p->m_pOwnerObject)
+        if (p == maybe_ancestor)
+            return true;
+    return false;
+}
 
-    // Collect all currently-selected scene objects (not just the UI list items —
-    // selection lives on the scene objects so this picks up multi-select correctly).
-    ObjClassID expected_class = target ? target->GetFolderClass() : (ObjClassID)Form->m_cur_cls;
-    ObjectList selected_list;
+// Build the set of scene objects a drag-drop operation should act on.
+//
+// The user's drag *intent* is the item from the ImGui payload (`dragged`). On top
+// of that we layer the current scene multi-selection, but with two exclusions:
+//
+//   1. Ancestors of the dragged item are dropped. A residual selection on a
+//      parent folder (e.g. user clicked the folder earlier to look at its
+//      properties, then expanded it and dragged a child out) must not piggyback
+//      the parent into the destination. This was the original drag-drop bug.
+//   2. Descendants of anything already in the set are dropped. Moving a folder
+//      carries its children via m_pOwnerObject implicitly; listing them again
+//      would be redundant and could re-order them oddly inside the destination.
+static void CollectDragMoveSet(CCustomObject* dragged, xr_vector<CCustomObject*>& out)
+{
+    out.clear();
+    if (dragged)
+        out.push_back(dragged);
+
     for (SceneToolsMapPairIt it = Scene->FirstTool(); it != Scene->LastTool(); ++it)
     {
         ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(it->second);
         if (!ot)
             continue;
         for (CCustomObject* Obj: ot->GetObjects())
-            if (Obj->Selected())
-                selected_list.push_back(Obj);
+        {
+            if (!Obj->Selected())
+                continue;
+            if (Obj == dragged)
+                continue;
+            if (IsAncestor(Obj, dragged))
+                continue;
+            if (IsAncestor(dragged, Obj))
+                continue;
+            // Skip if some earlier-added entry is an ancestor — keeps "topmost only".
+            bool covered = false;
+            for (CCustomObject* existing: out)
+            {
+                if (IsAncestor(existing, Obj))
+                {
+                    covered = true;
+                    break;
+                }
+            }
+            if (covered)
+                continue;
+            out.push_back(Obj);
+        }
     }
+}
+
+void UIObjectList::ReparentSelectedTo(CFolderObject* target, CCustomObject* dragged)
+{
+    if (Form == nullptr)
+        return;
+
+    xr_vector<CCustomObject*> selected_list;
+    CollectDragMoveSet(dragged, selected_list);
 
     if (selected_list.empty())
         return;
@@ -394,7 +444,7 @@ void UIObjectList::ReparentSelectedTo(CFolderObject* target)
     }
 }
 
-void UIObjectList::ReorderSelectedBefore(CCustomObject* target)
+void UIObjectList::ReorderSelectedBefore(CCustomObject* target, CCustomObject* dragged)
 {
     if (Form == nullptr || !target)
         return;
@@ -409,19 +459,12 @@ void UIObjectList::ReorderSelectedBefore(CCustomObject* target)
     if (target->m_pOwnerObject && target->m_pOwnerObject->FClassID == OBJCLASS_FOLDER)
         target_parent = (CFolderObject*)target->m_pOwnerObject;
 
-    // Snapshot of currently-selected scene objects across all tools (so multi-drag
-    // from anywhere works). We iterate per-tool m_Objects so the relative order
-    // among same-class sources is preserved in the result.
+    // Honour the dragged-item-vs-residual-selection rules. See CollectDragMoveSet
+    // for why this is needed — same bug class as ReparentSelectedTo.
     xr_vector<CCustomObject*> sources;
-    for (SceneToolsMapPairIt it = Scene->FirstTool(); it != Scene->LastTool(); ++it)
-    {
-        ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(it->second);
-        if (!ot)
-            continue;
-        for (CCustomObject* obj: ot->GetObjects())
-            if (obj != target && obj->Selected())
-                sources.push_back(obj);
-    }
+    CollectDragMoveSet(dragged, sources);
+    // The target itself can never be a source.
+    sources.erase(std::remove(sources.begin(), sources.end(), target), sources.end());
     if (sources.empty())
         return;
 
@@ -529,8 +572,12 @@ void UIObjectList::DrawObjects()
         if (ImGui::BeginDragDropTarget())
         {
             const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("OBJLIST_ITEM");
-            if (payload)
-                ReparentSelectedTo(NULL);
+            if (payload && payload->DataSize == sizeof(UIObjectListItem*))
+            {
+                UIObjectListItem* dragged_item = *(UIObjectListItem**)payload->Data;
+                CCustomObject*    dragged_obj  = dragged_item ? dragged_item->Object : nullptr;
+                ReparentSelectedTo(NULL, dragged_obj);
+            }
             ImGui::EndDragDropTarget();
         }
         ImGui::PopID();

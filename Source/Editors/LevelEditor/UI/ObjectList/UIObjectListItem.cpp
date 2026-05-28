@@ -192,15 +192,21 @@ void UIObjectListItem::Draw()
     }
 
     // Drop target — folder rows reparent into themselves; leaf rows reorder before.
+    // We dereference the payload to recover the actual dragged item (`UIObjectListItem*`).
+    // The helpers use that to build a "drag intent + selection minus ancestors" move set,
+    // which is what stops a residual parent-folder selection from piggybacking on a
+    // single-child drag.
     if (ImGui::BeginDragDropTarget())
     {
         const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("OBJLIST_ITEM");
-        if (payload)
+        if (payload && payload->DataSize == sizeof(UIObjectListItem*))
         {
+            UIObjectListItem* dragged_item = *(UIObjectListItem**)payload->Data;
+            CCustomObject*    dragged_obj  = dragged_item ? dragged_item->Object : nullptr;
             if (is_folder)
-                UIObjectList::ReparentSelectedTo((CFolderObject*)Object);
+                UIObjectList::ReparentSelectedTo((CFolderObject*)Object, dragged_obj);
             else
-                UIObjectList::ReorderSelectedBefore(Object);
+                UIObjectList::ReorderSelectedBefore(Object, dragged_obj);
         }
         ImGui::EndDragDropTarget();
     }

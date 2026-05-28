@@ -21,8 +21,14 @@ public:
     // Folder operations
     static bool IsFolderAllowedForClass(ObjClassID cls);
     static void CreateFolderForCurrentClass();
-    static void ReparentSelectedTo(CFolderObject* target);   // target == NULL → unparent (root)
-    static void ReorderSelectedBefore(CCustomObject* target);
+    // `dragged` is the actual item the user grabbed (from the ImGui payload). The helpers
+    // build the move set as { dragged } + { other selected items that are neither ancestors
+    // nor descendants of items already in the set }, which is the single source of truth
+    // for what these operations act on. Passing the dragged item explicitly fixes the
+    // residual-selection bug where e.g. a previously-selected parent folder would piggyback
+    // when the user dragged one of its children — see ReparentSelectedTo's comment.
+    static void ReparentSelectedTo(CFolderObject* target, CCustomObject* dragged);   // target == NULL → unparent (root)
+    static void ReorderSelectedBefore(CCustomObject* target, CCustomObject* dragged);
 
 private:
     static UIObjectList* Form;
