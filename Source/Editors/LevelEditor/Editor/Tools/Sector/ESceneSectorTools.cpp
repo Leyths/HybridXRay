@@ -71,7 +71,18 @@ void ESceneSectorTool::OnBeforeObjectChange(CCustomObject* O)
     CSceneObject* obj = dynamic_cast<CSceneObject*>(O);
     if (obj && !m_Objects.empty())
     {
+        // CSceneObject::Meshes() returns nullptr whenever m_pReference is null
+        // (no model loaded — either never set, or load failed). The next line
+        // would deref it. Bug repros via bulk-rename of references on a
+        // multi-select that includes a CSceneObject with no loaded reference
+        // while the scene has at least one sector: ApplyValue propagates the
+        // new ref, fires ReferenceChange, which calls Scene->BeforeObjectChange
+        // *before* UpdateReference runs — so m_pReference is still null at the
+        // moment we enter this hook. Release builds crash with no stack trace
+        // because VERIFY is a no-op.
         EditMeshVec* meshes = obj->Meshes();
+        if (!meshes)
+            return;
         for (EditMeshIt m_it = meshes->begin(); m_it != meshes->end(); m_it++)
         {
             for (ObjectIt _F = m_Objects.begin(); _F != m_Objects.end(); _F++)

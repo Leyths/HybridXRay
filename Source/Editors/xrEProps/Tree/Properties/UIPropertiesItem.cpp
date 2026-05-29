@@ -146,17 +146,25 @@ void UIPropertiesItem::DrawItem()
                 }
             }
             else if (PItem->m_Flags.test(PropItem::flMixed) && !PItem->m_Flags.test(PropItem::flIgnoreMixed) &&
-                     type != PROP_RTEXT && type != PROP_STEXT && type != PROP_CTEXT)
+                     type != PROP_RTEXT && type != PROP_STEXT && type != PROP_CTEXT && type != PROP_CHOOSE)
             {
-                // Text types skip the (Mixed) button and fall through to
-                // DrawProp. Their button label is already "(mixed)..." via
-                // PropItem::GetDrawText, so clicking it opens the same edit
-                // popup as a normal-state click — the OK handler then calls
-                // ApplyValue across every selected object, where per-object
-                // OnNameChange (for the Name field) auto-suffixes collisions.
-                // Without this shortcut the user couldn't type a fresh name
-                // for a bulk rename — clicking (Mixed) would just propagate
-                // values.front() to all.
+                // Types whose normal click opens a picker/editor skip the
+                // (Mixed) intermediate button and fall through to DrawProp —
+                // the picker handles the "pick a new value and apply to all"
+                // gesture natively via its OK handler's ApplyValue. Without
+                // this shortcut, clicking (Mixed) would propagate
+                // values.front() to every selected object on the first click
+                // (destructive — the user wanted to open the picker, not
+                // overwrite their data), and only opening the picker on a
+                // second click. Exempt list:
+                //   - PROP_RTEXT/STEXT/CTEXT: the EditText popup. Lets the
+                //     user type a fresh name across a bulk rename. OnNameChange
+                //     auto-suffixes collisions per object.
+                //   - PROP_CHOOSE: the asset chooser modal (Reference,
+                //     Texture, Shader, etc.). The chooser's OK calls
+                //     m_EditChooseValue->ApplyValue<ChooseValue,shared_str>,
+                //     which fans the picked value out to every selected
+                //     object's bound m_ReferenceName (or equivalent).
                 if (ImGui::Button("(Mixed)", ImVec2(-1, 0)))
                 {
                     RemoveMixed();
