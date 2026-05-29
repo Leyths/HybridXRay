@@ -311,10 +311,46 @@ void CSceneObject::OnClickClearSurface(ButtonValue*, bool&, bool&)
     Scene->UndoSave();
     ClearSurface();
 }
+// Rename all currently-selected CSceneObject instances so each ends up at its
+// own RefName() (collision-resolved by Scene->GenObjectName). Wraps the
+// existing ESceneCustomOTool::MultiRenameObjects helper plus undo + UI
+// refresh. Static (file-scope) because it acts on the scene as a whole, not
+// on `this` — the EditText popup fires it via the PropItem's extra-button
+// delegate.
+static void RenameSelectedSceneObjectsToReference()
+{
+    ESceneCustomOTool* ot = Scene->GetOTool(OBJCLASS_SCENEOBJECT);
+    if (!ot)
+        return;
+    if (ot->MultiRenameObjects() > 0)
+    {
+        Scene->UndoSave();
+        ExecCommand(COMMAND_UPDATE_PROPERTIES);
+    }
+}
+
 void CSceneObject::FillProp(LPCSTR pref, PropItemVec& items)
 {
     static shared_str occ_name = "materials\\occ";
+    const size_t      before   = items.size();
     inherited::FillProp(pref, items);
+
+    // The inherited FillProp just created the Name PropItem. Find it and tag
+    // it with the "Rename to reference" extra button so the EditText popup
+    // renders that action when the user opens the Name field on scene
+    // object(s). Limited to items appended by the inherited call so we don't
+    // re-walk any pre-existing entries.
+    const shared_str name_key = PrepareKey(pref, "Name");
+    for (size_t i = before; i < items.size(); ++i)
+    {
+        if (0 == xr_strcmp(items[i]->Key(), name_key.c_str()))
+        {
+            items[i]->m_ExtraButtonLabel = "Rename to reference";
+            items[i]->m_OnExtraButtonClick.bind(&RenameSelectedSceneObjectsToReference);
+            break;
+        }
+    }
+
     PropValue* V = PHelper().CreateChoose(items, PrepareKey(pref, "Reference"), &m_ReferenceName, smObject);
     V->OnChangeEvent.bind(this, &CSceneObject::ReferenceChange);
     if (IsDynamic())

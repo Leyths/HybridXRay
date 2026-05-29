@@ -322,7 +322,33 @@ void UIPropertiesForm::DrawEditText()
             else
                 R_ASSERT(false);
         }
-        ImGui::SameLine(150);
+
+        // Optional class-specific extra button. The FillProp that owns this
+        // PropItem tags it with a label + delegate when a side-action is
+        // available from the rename dialog (currently CSceneObject's "Rename
+        // to reference"). Engine-agnostic — we just render and fire.
+        if (m_EditTextValue->m_ExtraButtonLabel.size() && !m_EditTextValue->m_OnExtraButtonClick.empty())
+        {
+            ImGui::SameLine(0);
+            if (ImGui::Button(m_EditTextValue->m_ExtraButtonLabel.c_str()))
+            {
+                m_EditTextValue->m_OnExtraButtonClick();
+                // Mirror the Ok-success teardown: the action mutates the scene
+                // directly (it doesn't go through ApplyValue), so the typed
+                // buffer is moot. Close the popup and mark the form dirty.
+                xr_delete(m_EditTextValueData);
+                xr_delete(m_EditTextValueInitial);
+                Modified();
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        // Visual separation between the action group (Ok/Cancel/Apply/optional
+        // extra) and the file-IO group (Load/Save/Clear). Relative spacing
+        // rather than absolute x=150 — an absolute anchor overlapped the new
+        // extra button when its label was wide. A few ItemSpacings still reads
+        // as a deliberate gap.
+        ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 4);
 
         if (ImGui::Button("Load"))
         {

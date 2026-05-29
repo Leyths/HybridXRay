@@ -173,6 +173,19 @@ public:
         flIgnoreMixed   = (1 << 6),
     };
     Flags32 m_Flags;
+
+    // Optional secondary button rendered in the EditText popup alongside
+    // Ok / Cancel / Apply. Set by the owning FillProp when the property has a
+    // class-specific bulk action that makes sense from the rename dialog (e.g.
+    // CSceneObject tagging the Name field with "Rename to reference"). The
+    // engine-agnostic UIPropertiesForm just renders the label and fires the
+    // delegate — empty defaults mean "no extra button", which is the case for
+    // every PropItem the editor creates outside that one tagging site.
+public:
+    typedef fastdelegate::FastDelegate0<>          TOnExtraButton;
+    shared_str                                     m_ExtraButtonLabel;
+    TOnExtraButton                                 m_OnExtraButtonClick;
+
 public:
     PropItem(EPropType _type):
         type(_type), prop_color(0), val_color(0), item(0), key(0), OnClickEvent(0), OnDrawTextEvent(0), OnItemFocused(0)
