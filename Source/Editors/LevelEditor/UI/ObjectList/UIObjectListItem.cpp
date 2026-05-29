@@ -106,16 +106,26 @@ void UIObjectListItem::Draw()
     if (dim_hidden)
         ImGui::PopStyleVar();
 
-    // Persist collapse state for folders.
+    // Persist collapse state for folders. A click on the expand/collapse arrow
+    // fires both IsItemToggledOpen() *and* IsItemClicked() on the same frame —
+    // we capture the toggle flag here and use it to suppress the selection
+    // branch below, so toggling a folder's children visibility doesn't blow
+    // away any selection the user already had.
+    bool toggled_open_this_frame = false;
     if (is_folder && !Items.empty())
     {
         CFolderObject* fo = (CFolderObject*)Object;
         if (ImGui::IsItemToggledOpen())
+        {
             fo->SetCollapsed(!fo->IsCollapsed());
+            toggled_open_this_frame = true;
+        }
     }
 
-    // Click handling — same semantics as before.
-    if (ImGui::IsItemClicked())
+    // Click handling — same semantics as before, except the arrow-click case
+    // (which also fires IsItemClicked) is now ignored so opening/closing a
+    // folder is a pure UI gesture with no side effects on scene selection.
+    if (ImGui::IsItemClicked() && !toggled_open_this_frame)
     {
         if (ImGui::GetIO().KeyShift)
         {
