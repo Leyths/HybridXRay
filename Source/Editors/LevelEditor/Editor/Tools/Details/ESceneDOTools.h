@@ -69,8 +69,8 @@ class EDetailManager: public CDetailManager, public ESceneToolBase
 
     void        GetSlotRect(Frect& rect, int sx, int sz);
     void        GetSlotTCRect(Irect& rect, int sx, int sz);
-    u8          GetRandomObject(u32 color_index);
-    u8          GetObject(ColorIndexPairIt& CI, u8 id);
+    u16         GetRandomObject(u32 color_index);
+    u16         GetObject(ColorIndexPairIt& CI, u16 id);
 
     void        CalcClosestCount(int part, const Fcolor& C, SIndexDistVec& best);
     void        FindClosestIndex(const Fcolor& C, SIndexDistVec& best);

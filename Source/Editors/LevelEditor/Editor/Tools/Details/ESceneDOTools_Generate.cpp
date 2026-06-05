@@ -289,22 +289,22 @@ void EDetailManager::CalcClosestCount(int part, const Fcolor& C, SIndexDistVec& 
         best[idx].cnt[part]++;
 }
 
-u8 EDetailManager::GetRandomObject(u32 color_index)
+u16 EDetailManager::GetRandomObject(u32 color_index)
 {
     ColorIndexPairIt CI = m_ColorIndices.find(color_index);
     R_ASSERT(CI != m_ColorIndices.end());
     int      k  = DetailRandom.randI(0, CI->second.size());
     DetailIt it = std::find(objects.begin(), objects.end(), CI->second[k]);
     VERIFY(it != objects.end());
-    return u8(it - objects.begin());
+    return u16(it - objects.begin());
 }
 
-u8 EDetailManager::GetObject(ColorIndexPairIt& CI, u8 id)
+u16 EDetailManager::GetObject(ColorIndexPairIt& CI, u16 id)
 {
     VERIFY(CI != m_ColorIndices.end());
     DetailIt it = std::find(objects.begin(), objects.end(), (CDetail*)CI->second[id]);
     VERIFY(it != objects.end());
-    return u8(it - objects.begin());
+    return u16(it - objects.begin());
 }
 
 bool CompareWeightFunc(SIndexDist& d0, SIndexDist& d1)
@@ -431,10 +431,10 @@ bool EDetailManager::UpdateSlotObjects(int x, int z)
         // objects
         ColorIndexPairIt CI = m_ColorIndices.find(best[k].index);
         R_ASSERT(CI != m_ColorIndices.end());
-        U8Vec elem;
+        U16Vec elem;
         elem.resize(CI->second.size());
-        for (U8It b_it = elem.begin(); b_it != elem.end(); b_it++)
-            *b_it = u8(b_it - elem.begin());
+        for (U16It b_it = elem.begin(); b_it != elem.end(); b_it++)
+            *b_it = u16(b_it - elem.begin());
         //        best_rand A(DetailRandom);
         std::random_shuffle(elem.begin(), elem.end());   //,A);
         for (auto b_it = elem.begin(); b_it != elem.end(); b_it++)

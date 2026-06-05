@@ -1,7 +1,8 @@
 ﻿#include "stdafx.h"
 #include "..\..\xrRender\Private\DetailFormat.h"
 
-static const u32 DETMGR_VERSION = 0x0003ul;
+static const u32 DETMGR_VERSION_3 = 0x0003ul;   // legacy .dm: 16-byte v3 slots
+static const u32 DETMGR_VERSION   = 0x0004ul;   // current .dm: 20-byte v4 slots
 enum
 {
     DETMGR_CHUNK_VERSION      = 0x1000ul,
@@ -335,7 +336,7 @@ bool EDetailManager::LoadStream(IReader& F)
     R_ASSERT(F.find_chunk(DETMGR_CHUNK_VERSION));
     u32 version = F.r_u32();
 
-    if (version != DETMGR_VERSION)
+    if (version != DETMGR_VERSION && version != DETMGR_VERSION_3)
     {
         ELog.Msg(mtError, "& EDetailManager: unsupported version.");
         return false;
@@ -353,7 +354,20 @@ bool EDetailManager::LoadStream(IReader& F)
     if (slot_cnt)
         dtSlots = xr_alloc<DetailSlot>(slot_cnt);
     m_Selected.resize(slot_cnt);
-    F.r(dtSlots, slot_cnt * sizeof(DetailSlot));
+    if (version == DETMGR_VERSION_3)
+    {
+        // legacy 16-byte slots -> expand into the wide working slot
+        for (int i = 0; i < slot_cnt; i++)
+        {
+            DetailSlot_v3 s;
+            F.r(&s, sizeof(DetailSlot_v3));
+            expand_v3(dtSlots[i], s);
+        }
+    }
+    else
+    {
+        F.r(dtSlots, slot_cnt * sizeof(DetailSlot));
+    }
 
     // objects
     if (!LoadColorIndices(F))
@@ -480,7 +494,7 @@ bool EDetailManager::Export(LPCSTR path)
     RStringSet  textures_set;
     RStringVec  textures;
     U32Vec      remap;
-    U8Vec       remap_object(objects.size(), u8(-1));
+    U16Vec      remap_object(objects.size(), u16(-1));
 
     int         slot_cnt = dtH.size_x * dtH.size_z;
     for (int slot_idx = 0; slot_idx < slot_cnt; slot_idx++)
@@ -488,7 +502,7 @@ bool EDetailManager::Export(LPCSTR path)
         DetailSlot* it = &dtSlots[slot_idx];
         for (int part = 0; part < 4; part++)
         {
-            u8 id = it->r_id(part);
+            u16 id = it->r_id(part);
             if (id != DetailSlot::ID_Empty)
             {
                 textures_set.insert(((EDetail*)(objects[id]))->GetTextureName());
@@ -498,12 +512,12 @@ bool EDetailManager::Export(LPCSTR path)
     }
     textures.assign(textures_set.begin(), textures_set.end());
 
-    U8It remap_object_it = remap_object.begin();
+    U16It remap_object_it = remap_object.begin();
 
     u32  new_idx         = 0;
     for (DetailIt d_it = objects.begin(); d_it != objects.end(); d_it++, remap_object_it++)
         if ((*remap_object_it == 1) && (textures_set.find(((EDetail*)(*d_it))->GetTextureName()) != textures_set.end()))
-            *remap_object_it = (u8)new_idx++;
+            *remap_object_it = (u16)new_idx++;
 
     xr_string do_tex_name = ChangeFileExt(fn, "_details");
     int       res         = ImageLib.CreateMergedTexture(textures, do_tex_name.c_str(), STextureParams::tfDXT5, 256, 8192, 256, 8192, offsets, scales, rotated, remap);
@@ -519,7 +533,7 @@ bool EDetailManager::Export(LPCSTR path)
         F.open_chunk(DETMGR_CHUNK_OBJECTS);
         for (DetailIt it = objects.begin(); it != objects.end(); it++)
         {
-            if (remap_object[it - objects.begin()] != u8(-1))
+            if (remap_object[it - objects.begin()] != u16(-1))
             {
                 F.open_chunk(object_idx++);
                 if (!((EDetail*)(*it))->m_pRefs)
@@ -550,33 +564,48 @@ bool EDetailManager::Export(LPCSTR path)
     // slots
     if (bRes)
     {
+        // export v3 (16-byte slots) when the level uses <=63 distinct objects, else v4 (20-byte)
+        bool use_v4 = (new_idx > DetailSlot_v3::ID_Empty);
+
         xr_vector<DetailSlot> dt_slots(slot_cnt);
         dt_slots.assign(dtSlots, dtSlots + slot_cnt);
         for (int slot_idx = 0; slot_idx < slot_cnt; slot_idx++)
         {
             DetailSlot& it = dt_slots[slot_idx];
             // zero colors need lighting
-            it.c_dir       = 0;
-            it.c_hemi      = 0;
-            it.c_r         = 0;
-            it.c_g         = 0;
-            it.c_b         = 0;
+            it.c_dir  = 0;
+            it.c_hemi = 0;
+            it.c_r    = 0;
+            it.c_g    = 0;
+            it.c_b    = 0;
             for (int part = 0; part < 4; part++)
             {
-                u8 id = it.r_id(part);
+                u16 id = it.r_id(part);
                 if (id != DetailSlot::ID_Empty)
                     it.w_id(part, remap_object[id]);
             }
         }
+
         F.open_chunk(DETMGR_CHUNK_SLOTS);
-        F.w(dt_slots.data(), dtH.size_x * dtH.size_z * sizeof(DetailSlot));
+        if (use_v4)
+        {
+            F.w(dt_slots.data(), slot_cnt * sizeof(DetailSlot));
+            dtH.version = DETAIL_VERSION_4;
+        }
+        else
+        {
+            // pack the remapped wide slots into legacy 16-byte v3 slots (all ids <= 62)
+            xr_vector<DetailSlot_v3> v3_slots(slot_cnt);
+            for (int slot_idx = 0; slot_idx < slot_cnt; slot_idx++)
+                pack_v3(v3_slots[slot_idx], dt_slots[slot_idx]);
+            F.w(v3_slots.data(), slot_cnt * sizeof(DetailSlot_v3));
+            dtH.version = DETAIL_VERSION_3;
+        }
         F.close_chunk();
         pb->Inc();
 
         // write header
-        dtH.version      = DETAIL_VERSION;
         dtH.object_count = object_idx;
-
         F.w_chunk(DETMGR_CHUNK_HEADER, &dtH, sizeof(DetailHeader));
 
         bRes = F.save_to(fn.c_str());
