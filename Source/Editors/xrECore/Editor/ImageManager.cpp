@@ -713,10 +713,30 @@ BOOL CImageManager::CreateOBJThumbnail(LPCSTR tex_name, CEditableObject* obj, in
     BOOL    bResult  = TRUE;
     // save render params
     Flags32 old_flag = psDeviceFlags;
-    // set render params
     psDeviceFlags.set(rsStatistic | rsDrawGrid, FALSE);
-    //	u32 cc						= 	EPrefs.scene_clear_color;
-    //	EPrefs.scene_clear_color 	= 	0x00333333;
+
+    // The thumbnail RT is always square but the editor builds mProject from
+    // the wide viewport aspect, so the captured image came out stretched.
+    // Swap in a square-aspect projection just for the snap, then put the
+    // user's projection back. fASPECT and mProject are member state that
+    // other systems read directly (e.g. ZoomExtents picks the larger of
+    // FOV-vs-aspect-FOV distances), so both have to be in sync.
+    const float save_aspect    = EDevice->fASPECT;
+    Fmatrix     save_project   = EDevice->mProject;
+    EDevice->fASPECT           = 1.0f;
+    EDevice->mProject.build_projection(
+        deg2rad(EDevice->fFOV),
+        EDevice->fASPECT,
+        EDevice->m_Camera._Znear(),
+        EDevice->m_Camera._Zfar());
+    RCache.set_xform_project(EDevice->mProject);
+    // MakeScreenshot's render path runs PrepareRedraw + Begin + Tools->Render
+    // but skips the UpdateView() that the normal TUI::Redraw loop runs, so
+    // RCache's view matrix would otherwise still hold the camera from the
+    // last on-screen frame. That's why the bulk thumbnail maker (which sets
+    // a fresh camera per iteration without any normal frames in between)
+    // was rendering with a stale view and producing zoomed-out captures.
+    EDevice->UpdateView();
 
     U32Vec pixels;
     u32    w = 512, h = 512;
@@ -732,9 +752,11 @@ BOOL CImageManager::CreateOBJThumbnail(LPCSTR tex_name, CEditableObject* obj, in
         ELog.DlgMsg(mtError, "! Can't make screenshot.");
     }
 
-    // restore render params
-    psDeviceFlags = old_flag;
-    //	EPrefs.scene_clear_color 	= cc;
+    EDevice->fASPECT  = save_aspect;
+    EDevice->mProject = save_project;
+    RCache.set_xform_project(EDevice->mProject);
+
+    psDeviceFlags     = old_flag;
     return bResult;
 }
 

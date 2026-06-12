@@ -47,6 +47,31 @@ private:
 
     xr_vector<CSceneObject*> m_pEditObjects;
 
+    // Centers + 45/45 rotates the preview SceneObject so the on-screen view
+    // matches what the bulk thumbnail maker will capture. Lets the user
+    // sanity-check a few thumbs single-shot before committing 80k.
+    void                     ApplyThumbnailPose(CSceneObject* SO);
+    void                     FrameForThumbnail(CSceneObject* SO);
+    // Camera save/restore so toggling Preview doesn't yank the user's view
+    // permanently. Saved on first Preview-on, restored on Preview-off /
+    // library close / batch completion.
+    void                     SaveCameraState();
+    void                     RestoreCameraState();
+    bool                     m_CameraSaved;
+    Fvector                  m_SavedCamHPB;
+    Fvector                  m_SavedCamPos;
+
+    // Bulk thumbnail flow.
+    u32                      CountMissingThumbnails() const;
+    u32                      CountExistingThumbnails() const;
+    bool                     ItemThumbExists(ListItem* item) const;
+    void                     MakeAllMissingThumbnails();
+    void                     ClearAllThumbnails();
+    void                     DrawConfirmModals();
+    bool                     m_PendingMakeAll;
+    bool                     m_PendingClearAll;
+    u32                      m_PendingCount;
+
     /*
     static IC bool IsOpen() { return Form; }
 private:

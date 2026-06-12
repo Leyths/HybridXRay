@@ -30,7 +30,18 @@ bool                     CEditableObject::Load(const char* fname)
         IReader* F = FS.r_open(fname);
         R_ASSERT(F);
         IReader* OBJ = F->open_chunk(EOBJ_CHUNK_OBJECT_BODY);
-        R_ASSERT2(OBJ, "Corrupted file.");
+        if (!OBJ)
+        {
+            // Was an R_ASSERT2 "Corrupted file." — but every caller already
+            // checks our return value (LoadEditObject deletes the object on
+            // false; ELibrary::CreateEditObject just returns null). Soft-fail
+            // so the bulk thumbnail maker (and any other caller iterating
+            // many references) can skip the bad file instead of taking down
+            // the SDK with an assert dialog.
+            ELog.Msg(mtError, "! Corrupted .object file (missing OBJECT_BODY chunk): %s", fname);
+            FS.r_close(F);
+            return false;
+        }
         Msg("+ ..Import object '%s'", fname);
         bool bRes = Load(*OBJ);
         OBJ->close();

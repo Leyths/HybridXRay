@@ -19,10 +19,14 @@ UIEditLibrary::UIEditLibrary()
     m_ObjectList = xr_new<UIItemListForm>();
     InitObjects();
     m_ObjectList->SetOnItemFocusedEvent(TOnILItemFocused(this, &UIEditLibrary::OnItemFocused));
-    m_Props      = xr_new<UIPropertiesForm>();
-    m_Selected   = nullptr;
-    m_Preview    = false;
-    m_SelectLods = false;
+    m_Props           = xr_new<UIPropertiesForm>();
+    m_Selected        = nullptr;
+    m_Preview         = false;
+    m_SelectLods      = false;
+    m_CameraSaved     = false;
+    m_PendingMakeAll  = false;
+    m_PendingClearAll = false;
+    m_PendingCount    = 0;
 }
 
 void UIEditLibrary::OnItemFocused(ListItem* item)
@@ -50,6 +54,14 @@ void UIEditLibrary::OnItemFocused(ListItem* item)
             ListItemsVec vec;
             vec.push_back(item);
             SelectionToReference(&vec);
+            // Match the bulk maker's framing so the user can sanity-check the
+            // exact thumbnail before committing to a 80k-object run.
+            SaveCameraState();
+            if (!m_pEditObjects.empty())
+            {
+                ApplyThumbnailPose(m_pEditObjects.front());
+                FrameForThumbnail(m_pEditObjects.front());
+            }
         }
     }
 
@@ -57,7 +69,328 @@ void UIEditLibrary::OnItemFocused(ListItem* item)
     UI->RedrawScene();
 }
 
-UIEditLibrary::~UIEditLibrary() {}
+UIEditLibrary::~UIEditLibrary()
+{
+    RestoreCameraState();
+}
+
+void UIEditLibrary::SaveCameraState()
+{
+    if (m_CameraSaved)
+        return;
+    m_SavedCamHPB = EDevice->m_Camera.GetHPB();
+    m_SavedCamPos = EDevice->m_Camera.GetPosition();
+    m_CameraSaved = true;
+}
+
+void UIEditLibrary::RestoreCameraState()
+{
+    if (!m_CameraSaved)
+        return;
+    EDevice->m_Camera.Set(m_SavedCamHPB, m_SavedCamPos);
+    m_CameraSaved = false;
+}
+
+void UIEditLibrary::ApplyThumbnailPose(CSceneObject* SO)
+{
+    if (!SO)
+        return;
+    // Yaw only — the object stays upright on its own Y axis (trees don't
+    // lean, props don't tip). A previous version baked pitch into the
+    // object's rotation and made everything look diagonally skewed. The
+    // pitch component is applied to the *camera* in FrameForThumbnail
+    // instead so the object stays vertical and we look down at it.
+    //
+    // Both the CEditableObject t_v* and the SceneObject F* have to be set:
+    // OnRender() resyncs SO from O->t_v* on every frame (so the library
+    // preview tracks edits made in the Object Editor), which would
+    // otherwise instantly undo the pose set on the SceneObject alone.
+    // FRotation.x is pitch (around world X), .y is heading (around world Y),
+    // .z is bank — confirmed via CCustomObject::OnUpdateTransform's
+    // setXYZi(-x, -y, -z) → setHPB(y, x, z) shuffle. We want heading only so
+    // the object stays vertical; the previous code put 45° on .x, which
+    // tilted everything forward.
+    CEditableObject* O = SO->GetReference();
+    if (O)
+    {
+        O->t_vPosition.set(0.f, 0.f, 0.f);
+        O->t_vRotate.set(0.f, deg2rad(45.f), 0.f);
+        O->t_vScale.set(1.f, 1.f, 1.f);
+    }
+    SO->FPosition.set(0.f, 0.f, 0.f);
+    SO->FRotation.set(0.f, deg2rad(45.f), 0.f);
+    SO->FScale.set(1.f, 1.f, 1.f);
+    // `true` forces OnUpdateTransform to run inline. Without it, the dirty
+    // flag is set but FTransform isn't rebuilt until the next OnFrame /
+    // RenderSingle. The single-shot Preview flow always has many frames
+    // between Apply and capture, but the bulk maker iterates in one tight
+    // call stack — FrameForThumbnail would otherwise read a stale matrix
+    // (identity) and compute the camera distance against the un-rotated
+    // local bbox, clipping wide objects.
+    SO->UpdateTransform(true);
+}
+
+void UIEditLibrary::FrameForThumbnail(CSceneObject* SO)
+{
+    if (!SO)
+        return;
+    CEditableObject* obj = SO->GetReference();
+    if (!obj)
+        return;
+
+    Fbox bb = obj->GetBox();
+    bb.xform(SO->_Transform());
+
+    // Camera pitched 30° downward, no heading change — we look at the
+    // upright yawed object from above-front.
+    Fvector camera_hpb;
+    camera_hpb.set(0.f, -deg2rad(30.f), 0.f);
+
+    // ZoomExtents would frame the bounding *sphere*, which for axis-aligned
+    // bboxes can leave 40%+ empty margin in the captured square. Compute
+    // the exact distance instead: project every bbox corner into the
+    // camera's local frame, find the smallest distance such that every
+    // corner stays inside the square frustum at the capture aspect (= 1).
+    //
+    // For a corner offset cd (corner - bb_center, in camera-local coords)
+    // and a camera distance D along the camera's -k axis, the world point
+    // sits at camera-local (cd.x, cd.y, cd.z + D). It fits inside the
+    // square frame when:
+    //     |cd.x| / (cd.z + D) <= tan(fFOV/2)
+    //     |cd.y| / (cd.z + D) <= tan(fFOV/2)
+    // ⇒ D >= max(|cd.x|, |cd.y|) / tan(fFOV/2) - cd.z
+    Fmatrix cam_rot;
+    cam_rot.setHPB(camera_hpb.x, camera_hpb.y, camera_hpb.z);
+
+    Fvector C;
+    bb.getcenter(C);
+    Fvector corners[8];
+    bb.getpoints(corners);
+
+    const float tan_half_fov = tanf(deg2rad(EDevice->fFOV) * 0.5f);
+    float       required_d   = 0.f;
+    for (int i = 0; i < 8; ++i)
+    {
+        Fvector d;
+        d.sub(corners[i], C);
+        // Camera basis vectors in world coords are i/j/k of cam_rot. Project
+        // d onto each via dot to get camera-local coordinates of the corner
+        // offset.
+        Fvector cd;
+        cd.x = d.dotproduct(cam_rot.i);
+        cd.y = d.dotproduct(cam_rot.j);
+        cd.z = d.dotproduct(cam_rot.k);
+
+        const float dx = _abs(cd.x) / tan_half_fov - cd.z;
+        const float dy = _abs(cd.y) / tan_half_fov - cd.z;
+        required_d     = _max(required_d, _max(dx, dy));
+    }
+    // Small margin so tight-fitting corners don't get visually clipped by
+    // the very edge of the frame.
+    required_d *= 1.05f;
+
+    // Camera position = bbox center - forward * distance.
+    Fvector pos;
+    pos.mad(C, cam_rot.k, -required_d);
+
+    EDevice->m_Camera.Set(camera_hpb, pos);
+    UI->RedrawScene();
+}
+
+bool UIEditLibrary::ItemThumbExists(ListItem* item) const
+{
+    if (!item)
+        return false;
+    string_path fn;
+    FS.update_path(fn, _objects_, EFS.ChangeFileExt(item->Key(), ".thm").c_str());
+    return !!FS.exist(fn);
+}
+
+u32 UIEditLibrary::CountMissingThumbnails() const
+{
+    u32 missing = 0;
+    for (ListItem* item: m_ObjectList->m_Items)
+        if (!ItemThumbExists(item))
+            ++missing;
+    return missing;
+}
+
+u32 UIEditLibrary::CountExistingThumbnails() const
+{
+    u32 existing = 0;
+    for (ListItem* item: m_ObjectList->m_Items)
+        if (ItemThumbExists(item))
+            ++existing;
+    return existing;
+}
+
+void UIEditLibrary::MakeAllMissingThumbnails()
+{
+    // Make sure we're in a state matching the single-shot path. Re-using
+    // m_pEditObjects so OnRender's preview render covers the snap target.
+    const bool was_preview = m_Preview;
+    m_Preview              = true;
+    SaveCameraState();
+
+    // Collect the work-list up-front so we have a stable count for the
+    // progress bar even if generated .thm files start appearing on disk
+    // mid-run.
+    xr_vector<ListItem*> missing;
+    missing.reserve(m_ObjectList->m_Items.size());
+    for (ListItem* item: m_ObjectList->m_Items)
+        if (!ItemThumbExists(item))
+            missing.push_back(item);
+
+    if (missing.empty())
+    {
+        m_Preview = was_preview;
+        ELog.Msg(mtInformation, "+ No missing thumbnails.");
+        return;
+    }
+
+    SPBItem* pb   = UI->ProgressStart((u32)missing.size(), "Making thumbnails");
+    u32      made = 0;
+
+    u32 skipped = 0;
+    for (ListItem* item: missing)
+    {
+        pb->Inc(item->Key());
+
+        RStringVec sel;
+        sel.push_back(item->Key());
+        ChangeReference(sel);
+
+        if (m_pEditObjects.empty())
+        {
+            Msg("! Skipping '%s' (load failed)", item->Key());
+            ++skipped;
+            continue;
+        }
+
+        CSceneObject*    SO  = m_pEditObjects.front();
+        CEditableObject* obj = SO->GetReference();
+        // Three defensive gates before we touch the obj — corrupted .object
+        // files have surfaced as null references, mesh-less skeletons, and
+        // degenerate bboxes (min == max, all-zero). Any of those would push
+        // bad input into ApplyThumbnailPose / FrameForThumbnail / the render
+        // path and crash mid-loop. Log + continue keeps the batch alive.
+        if (!obj)
+        {
+            Msg("! Skipping '%s' (null reference)", item->Key());
+            ++skipped;
+            continue;
+        }
+        if (obj->MeshCount() == 0)
+        {
+            Msg("! Skipping '%s' (no meshes)", item->Key());
+            ++skipped;
+            continue;
+        }
+        const Fbox& obb = obj->GetBox();
+        Fvector     size;
+        obb.getsize(size);
+        const float min_extent = 1e-4f;
+        if (!obb.is_valid() ||
+            (size.x < min_extent && size.y < min_extent && size.z < min_extent))
+        {
+            Msg("! Skipping '%s' (degenerate bbox)", item->Key());
+            ++skipped;
+            continue;
+        }
+
+        ApplyThumbnailPose(SO);
+        FrameForThumbnail(SO);
+
+        string_path fn;
+        FS.update_path(fn, _objects_, EFS.ChangeFileExt(item->Key(), ".thm").c_str());
+        if (ImageLib.CreateOBJThumbnail(fn, obj, obj->Version()))
+            ++made;
+
+        if (UI->NeedAbort())
+            break;
+    }
+    UI->ProgressEnd(pb);
+
+    // Drop the temp preview objects so the right-pane texture refreshes from
+    // disk on the next click.
+    ChangeReference(RStringVec());
+    m_Selected    = nullptr;
+    m_Current     = nullptr;
+    m_RealTexture = nullptr;
+    m_Props->ClearProperties();
+
+    m_Preview = was_preview;
+    RestoreCameraState();
+
+    if (skipped)
+        ELog.DlgMsg(mtInformation, "+ Created %u thumbnail%s. Skipped %u object%s (see log for names).", made, made == 1 ? "" : "s", skipped, skipped == 1 ? "" : "s");
+    else
+        ELog.DlgMsg(mtInformation, "+ Created %u thumbnail%s.", made, made == 1 ? "" : "s");
+}
+
+void UIEditLibrary::ClearAllThumbnails()
+{
+    u32 removed = 0;
+    for (ListItem* item: m_ObjectList->m_Items)
+    {
+        string_path fn;
+        FS.update_path(fn, _objects_, EFS.ChangeFileExt(item->Key(), ".thm").c_str());
+        if (FS.exist(fn))
+        {
+            FS.file_delete(fn);
+            ++removed;
+        }
+    }
+    // Drop the right-pane preview texture so the next item click re-loads.
+    OnItemFocused(nullptr);
+    ELog.DlgMsg(mtInformation, "+ Deleted %u thumbnail%s.", removed, removed == 1 ? "" : "s");
+}
+
+void UIEditLibrary::DrawConfirmModals()
+{
+    if (m_PendingMakeAll)
+    {
+        ImGui::OpenPopup("Make thumbnails?");
+        m_PendingMakeAll = false;
+    }
+    if (m_PendingClearAll)
+    {
+        ImGui::OpenPopup("Clear thumbnails?");
+        m_PendingClearAll = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Make thumbnails?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("You are about to make thumbnails for %u items. This may take a while.\n\nBest run with no level loaded so scene geometry doesn't appear in the captures.", m_PendingCount);
+        ImGui::Separator();
+        if (ImGui::Button("Continue", ImVec2(120, 0)))
+        {
+            ImGui::CloseCurrentPopup();
+            MakeAllMissingThumbnails();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Clear thumbnails?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("You are about to delete thumbnails for %u items. This cannot be undone.", m_PendingCount);
+        ImGui::Separator();
+        if (ImGui::Button("Continue", ImVec2(120, 0)))
+        {
+            ImGui::CloseCurrentPopup();
+            ClearAllThumbnails();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
 
 void UIEditLibrary::InitObjects()
 {
@@ -579,7 +912,21 @@ void UIEditLibrary::DrawRightBar()
 
 void UIEditLibrary::OnPreviewClick()
 {
-    RefreshSelected();
+    if (m_Preview)
+    {
+        SaveCameraState();
+        RefreshSelected();
+        if (!m_pEditObjects.empty())
+        {
+            ApplyThumbnailPose(m_pEditObjects.front());
+            FrameForThumbnail(m_pEditObjects.front());
+        }
+    }
+    else
+    {
+        RefreshSelected();
+        RestoreCameraState();
+    }
 }
 
 void UIEditLibrary::RefreshSelected()
@@ -741,14 +1088,30 @@ void UIEditLibrary::Draw()
             DrawObjects();
 
         ImGui::EndChild();
-        ImGui::SetNextItemWidth(-200);
         ImGui::Text(" Items count: %u"_RU >> u8" Количество объектов: %u", m_ObjectList->m_Items.size());
-        // ImGui::InputText("##value", m_Filter, sizeof(m_Filter));
+        ImGui::SameLine();
+        if (ImGui::Button("Make all missing thumbnails"))
+        {
+            m_PendingCount   = CountMissingThumbnails();
+            m_PendingMakeAll = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SameLine();
+        if (ImGui::Button("Clear all thumbnails"))
+        {
+            m_PendingCount    = CountExistingThumbnails();
+            m_PendingClearAll = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImGui::EndGroup();
     }
 
     ImGui::SameLine();
     DrawRightBar();
+
+    DrawConfirmModals();
 
     ImGui::PopStyleVar(1);
     ImGui::End();
