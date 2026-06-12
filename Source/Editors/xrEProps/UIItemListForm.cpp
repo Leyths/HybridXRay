@@ -15,6 +15,17 @@ void UIItemListForm::Draw()
 {
     m_UseMenuEdit = false;
 
+    // Snap every folder shut on the frame the user clears the search — without
+    // this, ImGui keeps remembering the auto-opened state from the search.
+    const bool filter_active       = m_Filter.IsActive();
+    const bool filter_just_cleared = m_FilterWasActive && !filter_active;
+    if (filter_just_cleared)
+        CollapseAllFolders(&m_GeneralNode);
+    m_FilterWasActive = filter_active;
+
+    // Reserve a row at the bottom for the search input.
+    const float filter_row_height = ImGui::GetFrameHeightWithSpacing();
+    ImGui::BeginChild("##items_scroll", ImVec2(0, -filter_row_height), false);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
     DrawMenuEdit();
@@ -23,6 +34,24 @@ void UIItemListForm::Draw()
     if (!m_UseMenuEdit)
     {
         m_edit_node = nullptr;
+    }
+    ImGui::EndChild();
+
+    ImGui::SetNextItemWidth(-1);
+    m_Filter.Draw("##filter", -1);
+}
+
+void UIItemListForm::CollapseAllFolders(Node* node)
+{
+    if (!node)
+        return;
+    for (Node& child: node->Nodes)
+    {
+        if (child.IsFolder())
+        {
+            child.ForceCollapse = true;
+            CollapseAllFolders(&child);
+        }
     }
 }
 
@@ -409,6 +438,8 @@ void UIItemListForm::DrawItem(Node* Node)
 {
     if (!Node->Object->Visible())
         return;
+    if (m_Filter.IsActive() && !m_Filter.PassFilter(Node->Object->Key()))
+        return;
     ImGuiTreeNodeFlags Flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
     if (m_Flags.test(fMultiSelect))
     {
@@ -478,14 +509,30 @@ void UIItemListForm::DrawItem(Node* Node)
 bool UIItemListForm::IsDrawFolder(Node* node)
 {
     if (node->Object)
-        return node->Object->Visible();
-    bool result = m_Flags.test(fMenuEdit);
-    ;
+    {
+        if (!node->Object->Visible())
+            return false;
+        if (m_Filter.IsActive() && !m_Filter.PassFilter(node->Object->Key()))
+            return false;
+        return true;
+    }
+    bool any_descendant_visible = false;
     for (Node& N: node->Nodes)
     {
-        result = result | IsDrawFolder(&N);
+        any_descendant_visible = any_descendant_visible | IsDrawFolder(&N);
     }
-    return result;
+    if (m_Filter.IsActive())
+    {
+        // While searching, ignore fMenuEdit's "always show" — empty folders
+        // shouldn't pad the result list. Folders with at least one match
+        // are force-opened (FolderHelper::DrawNode reads Selected and calls
+        // SetNextItemOpen) so the user sees the match without manually
+        // expanding parents.
+        if (any_descendant_visible)
+            node->Selected = true;
+        return any_descendant_visible;
+    }
+    return m_Flags.test(fMenuEdit) | any_descendant_visible;
 }
 
 void UIItemListForm::IsItemClicked(Node* Node)

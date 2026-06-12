@@ -33,7 +33,11 @@ public:
         fMenuEdit    = (1 << 0),
         fMultiSelect = (1 << 1),
     };
-    Flags32 m_Flags;
+    Flags32         m_Flags;
+    // Search input shown at the bottom of the panel. While the filter is
+    // active, only matching items are drawn and their ancestor folders are
+    // force-opened (via Node::Selected) so the match is visible.
+    ImGuiTextFilter m_Filter;
 
 private:
     void       DrawMenuEdit();
@@ -86,4 +90,11 @@ public:
     void         ClearSelectedItems();
     bool         m_UseMenuEdit;
     void         ClearObject(Node* Node);
+
+private:
+    // Tracks the filter's active state across frames so Draw() can detect the
+    // active → inactive transition (user cleared the search) and force-collapse
+    // every folder the auto-expand had opened during the search.
+    bool m_FilterWasActive = false;
+    void CollapseAllFolders(Node* node);
 };

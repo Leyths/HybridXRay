@@ -10,9 +10,13 @@ public:
     };
     struct Node
     {
-        Node(): Object(nullptr), Type(FNT_Root), Selected(false) {}
+        Node(): Object(nullptr), Type(FNT_Root), Selected(false), ForceCollapse(false) {}
         ~Node() {}
         bool            Selected;
+        // One-shot "force the next render to be collapsed" flag — DrawNode
+        // calls SetNextItemOpen(false) then resets it. Used by UIItemListForm
+        // to snap folders shut after the search filter is cleared.
+        bool            ForceCollapse;
         EFolderNodeType Type;
         shared_str      Name;
         shared_str      Path;
@@ -330,7 +334,9 @@ public:
         }
         else if (N->IsFolder())
         {
-            if (N->Selected)
+            if (N->ForceCollapse)
+                ImGui::SetNextItemOpen(false);
+            else if (N->Selected)
                 ImGui::SetNextItemOpen(true);
             ImGui::AlignTextToFramePadding();
             ImGuiTreeNodeFlags FolderFlags = ImGuiTreeNodeFlags_OpenOnArrow;
@@ -367,6 +373,8 @@ public:
             }
             if (N->Selected)
                 N->Selected = false;
+            if (N->ForceCollapse)
+                N->ForceCollapse = false;
         }
         else if (N->IsObject())
         {
