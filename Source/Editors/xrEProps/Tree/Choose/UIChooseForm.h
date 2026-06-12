@@ -29,9 +29,25 @@ protected:
     static EventsMap m_Events;
 
 private:
+    // Cache of fully-built item lists per registered choose_ID. First call
+    // populates via on_fill (which often does an expensive directory walk —
+    // the texture chooser was the worst offender); every later call short-
+    // circuits straight to the cached vector. The user can drop the cache
+    // for the active chooser via the Refresh button in Draw().
+    DEFINE_MAP(u32, ChooseItemVec, ItemCache, ItemCacheIt);
+    static ItemCache       s_ItemCache;
+    static ChooseItemVec*  GetCached(u32 choose_id);
+    static void            SetCached(u32 choose_id, const ChooseItemVec& items);
+
+private:
     SChooseEvents        E;
     static UIChooseForm* Form;
     static ImTextureID   NullTexture;
+    // True iff the active form was populated through the registered-event
+    // path with no fill_param — i.e. the cache applies and the Refresh
+    // button is meaningful. Forms created from caller-supplied items or
+    // a one-off item_fill stay un-cached and hide the button.
+    bool                 m_Cacheable = false;
 
 public:
     enum Result
@@ -57,4 +73,12 @@ public:
     static void           AppendEvents(u32 choose_ID, LPCSTR caption, TOnChooseFillItems on_fill, TOnChooseSelectItem on_sel, TGetTexture on_thm, TOnChooseClose on_close, u32 flags);
     static void           ClearEvents();
     static SChooseEvents* GetEvents(u32 choose_ID);
+    // Drop the cached item list for a given choose_ID (or all of them) so the
+    // next chooser open re-runs on_fill. Editor code that mutates the
+    // underlying asset set (e.g. importing a new texture) can hook this.
+    static void           InvalidateCache(u32 choose_id);
+    static void           InvalidateAllCaches();
+
+private:
+    void Refresh();
 };

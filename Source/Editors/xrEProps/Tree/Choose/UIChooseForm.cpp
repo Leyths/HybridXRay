@@ -3,8 +3,32 @@
 
 XREPROPS_API extern bool bIsActorEditor = true;
 UIChooseForm::EventsMap  UIChooseForm::m_Events;
+UIChooseForm::ItemCache  UIChooseForm::s_ItemCache;
 UIChooseForm*            UIChooseForm::Form        = 0;
 ImTextureID              UIChooseForm::NullTexture = nullptr;
+
+ChooseItemVec* UIChooseForm::GetCached(u32 choose_id)
+{
+    ItemCacheIt it = s_ItemCache.find(choose_id);
+    if (it == s_ItemCache.end())
+        return nullptr;
+    return &it->second;
+}
+
+void UIChooseForm::SetCached(u32 choose_id, const ChooseItemVec& items)
+{
+    s_ItemCache[choose_id] = items;
+}
+
+void UIChooseForm::InvalidateCache(u32 choose_id)
+{
+    s_ItemCache.erase(choose_id);
+}
+
+void UIChooseForm::InvalidateAllCaches()
+{
+    s_ItemCache.clear();
+}
 
 void                     UIChooseForm::UpdateSelected(UIChooseFormItem* NewSelected)
 {
@@ -102,7 +126,18 @@ void UIChooseForm::Draw()
         {
             ImGui::Text("Find:");
             ImGui::SameLine();
-            m_Filter.Draw("##Find", -1);
+            // Reserve space for the Refresh button so the filter input still
+            // fills the remaining width to the right edge.
+            const float refresh_w = m_Cacheable ? 70.0f + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+            m_Filter.Draw("##Find", -refresh_w - 1);
+            if (m_Cacheable)
+            {
+                ImGui::SameLine();
+                if (ImGui::Button("Refresh", ImVec2(70.0f, 0)))
+                    Refresh();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
             if (ImGui::BeginChild("Left", ImVec2(0, 0), false))
             {
                 static ImGuiTableFlags flags = ImGuiTableFlags_BordersV | ImGuiTableFlags_BordersH | ImGuiTableFlags_RowBg | ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit;
@@ -246,6 +281,29 @@ void UIChooseForm::Draw()
             }
         }
     }
+}
+
+void UIChooseForm::Refresh()
+{
+    // Drop the cached list, re-run on_fill against an empty vector, store
+    // the result, and rebuild the tree so the UI reflects the fresh scan.
+    InvalidateCache(m_ChooseID);
+    m_Items.clear();
+    if (!E.on_fill.empty())
+        E.on_fill(m_Items, nullptr);
+    if (m_Cacheable)
+        SetCached(m_ChooseID, m_Items);
+
+    // Lose any currently-focused item — its pointer would dangle into the
+    // freshly-replaced m_Items, and Sort()/AppendItem rebuild from scratch.
+    m_SelectedItem = nullptr;
+    m_SelectedItems.clear();
+    if (m_Texture)
+        m_Texture->Release();
+    m_Texture = nullptr;
+    m_Props->ClearProperties();
+
+    FillItems(m_ChooseID);
 }
 
 void UIChooseForm::SetNullTexture(ImTextureID Texture)
@@ -400,9 +458,24 @@ void UIChooseForm::SelectItem(u32 choose_ID, int sel_cnt, LPCSTR init_name, TOnC
     }
     // set & fill
 
-    Form->m_Title = Form->E.caption.c_str();
-    if (!Form->E.on_fill.empty())
-        Form->E.on_fill(Form->m_Items, fill_param);
+    Form->m_Title            = Form->E.caption.c_str();
+    // Only the registered-event path with no per-call fill_param can be
+    // cached; caller-supplied items / one-off item_fill / parameterised
+    // fills (skeleton bones, etc.) bypass the cache entirely.
+    const bool     cacheable = !items && item_fill.empty() && fill_param == nullptr;
+    Form->m_Cacheable        = cacheable;
+    ChooseItemVec* cached    = cacheable ? GetCached(choose_ID) : nullptr;
+    if (cached)
+    {
+        Form->m_Items = *cached;
+    }
+    else
+    {
+        if (!Form->E.on_fill.empty())
+            Form->E.on_fill(Form->m_Items, fill_param);
+        if (cacheable)
+            SetCached(choose_ID, Form->m_Items);
+    }
 
     Form->FillItems(choose_ID);
 
@@ -449,6 +522,7 @@ void UIChooseForm::ClearEvents()
 {
     NullTexture->Release();
     m_Events.clear();
+    s_ItemCache.clear();
 }
 
 SChooseEvents* UIChooseForm::GetEvents(u32 choose_ID)

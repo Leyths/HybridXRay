@@ -21,23 +21,29 @@ UITreeItem* UITreeItem::AppendItem(const char* _Path, SLocalizedString _HintText
         string_path Name;
         xr_strcpy(Name, _Path);
         strchr(Name, _PathChar)[0] = 0;
-        UITreeItem* Item           = FindItem(Name);
+        shared_str  Key            = Name;
+        auto        it             = ChildIndex.find(Key);
+        UITreeItem* Item           = it == ChildIndex.end() ? nullptr : it->second;
         if (!Item)
         {
-            Items.push_back(CreateItem(Name, _HintText));
-            Item        = Items.back();
+            Item        = CreateItem(Key, _HintText);
             Item->Owner = this;
+            Items.push_back(Item);
+            ChildIndex.insert(std::make_pair(Key, Item));
         }
         return Item->AppendItem(strchr(_Path, _PathChar) + 1, _HintText);
     }
     else
     {
-        UITreeItem* Item = FindItem(_Path);
+        shared_str  Key  = _Path;
+        auto        it   = ChildIndex.find(Key);
+        UITreeItem* Item = it == ChildIndex.end() ? nullptr : it->second;
         if (!Item)
         {
-            Items.push_back(CreateItem(_Path, _HintText));
-            Item        = Items.back();
+            Item        = CreateItem(Key, _HintText);
             Item->Owner = this;
+            Items.push_back(Item);
+            ChildIndex.insert(std::make_pair(Key, Item));
         }
         return Item;
     }
@@ -55,19 +61,11 @@ UITreeItem* UITreeItem::FindItem(const char* _Path, char _PathChar)
         {
             return Item->FindItem(strchr(_Path, _PathChar) + 1);
         }
+        return nullptr;
     }
-    else
-    {
-        shared_str FName = _Path;
-        for (UITreeItem* Item: Items)
-        {
-            if (Item->Name == FName)
-            {
-                return Item;
-            }
-        }
-    }
-    return nullptr;
+    shared_str FName = _Path;
+    auto       it    = ChildIndex.find(FName);
+    return it == ChildIndex.end() ? nullptr : it->second;
 }
 
 UITreeItem* UITreeItem::CreateItem(shared_str _Name, SLocalizedString _HintText)

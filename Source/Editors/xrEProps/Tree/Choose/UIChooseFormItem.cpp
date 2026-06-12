@@ -128,23 +128,23 @@ void UIChooseFormItem::DrawRoot()
 
 void UIChooseFormItem::Sort()
 {
-    for (UITreeItem* Item: Items)
-    {
-        std::sort(Items.begin(), Items.end(), [](UITreeItem* Right, UITreeItem* Left) -> bool
+    // The outer iteration over Items used to wrap the std::sort call, making
+    // this O(|Items|² · log |Items|) at every tree level — for the texture
+    // chooser's ~26k entries that was the entire 12 s freeze. Sort once.
+    std::sort(Items.begin(), Items.end(), [](UITreeItem* Right, UITreeItem* Left) -> bool
+        {
+            UIChooseFormItem* pRight = ((UIChooseFormItem*)Right);
+            UIChooseFormItem* pLeft  = ((UIChooseFormItem*)Left);
+            if (pRight->Object && !pLeft->Object)
             {
-                UIChooseFormItem* pRight = ((UIChooseFormItem*)Right);
-                UIChooseFormItem* pLeft  = ((UIChooseFormItem*)Left);
-                if (pRight->Object && !pLeft->Object)
-                {
-                    return false;
-                }
-                if (!pRight->Object && pLeft->Object)
-                {
-                    return true;
-                }
-                return xr_strcmp(pRight->Name.c_str(), pLeft->Name.c_str()) < 0;
-            });
-    }
+                return false;
+            }
+            if (!pRight->Object && pLeft->Object)
+            {
+                return true;
+            }
+            return xr_strcmp(pRight->Name.c_str(), pLeft->Name.c_str()) < 0;
+        });
 
     for (UITreeItem* Item: Items)
     {
