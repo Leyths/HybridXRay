@@ -740,7 +740,7 @@ int ESceneWallmarkTool::ObjectCount()
     return count;
 }
 
-BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvector& dir, shared_str sh, shared_str tx, float width, float height, float rotate)
+BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvector& dir, shared_str sh, shared_str tx, float width, float height, float rotate, wallmark* exclude_from_similar, bool silent)
 {
     /*
     if (ObjectCount()>=MAX_WALLMARK_COUNT){
@@ -751,12 +751,14 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
 
     if (0 == sh.size())
     {
-        ELog.DlgMsg(mtError, "& Select texture before add wallmark.");
+        if (!silent)
+            ELog.DlgMsg(mtError, "& Select texture before add wallmark.");
         return FALSE;
     }
     if (0 == tx.size())
     {
-        ELog.DlgMsg(mtError, "& Select texture before add wallmark.");
+        if (!silent)
+            ELog.DlgMsg(mtError, "& Select texture before add wallmark.");
         return FALSE;
     }
     // pick contact poly
@@ -765,7 +767,8 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
     ObjectList* snap_list = Scene->GetSnapList(false);
     if (!snap_list)
     {
-        ELog.DlgMsg(mtError, "& Fill and activate snap list.");
+        if (!silent)
+            ELog.DlgMsg(mtError, "& Fill and activate snap list.");
         return FALSE;
     }
     // pick contact poly
@@ -820,7 +823,8 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
     // calc sphere
     if ((W->verts.size() < 3) || (W->verts.size() > MAX_WALLMARK_VERTEX_COUNT))
     {
-        ELog.DlgMsg(mtError, "! Invalid wallmark vertex count. [Min: %d. Max: %d].", 3, MAX_WALLMARK_VERTEX_COUNT);
+        if (!silent)
+            ELog.DlgMsg(mtError, "! Invalid wallmark vertex count. [Min: %d. Max: %d].", 3, MAX_WALLMARK_VERTEX_COUNT);
         wm_destroy(W);
         return FALSE;
     }
@@ -846,6 +850,8 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
         for (; it != end; it++)
         {
             wallmark* wm = *it;
+            if (wm == exclude_from_similar)
+                continue;   // caller will free this one explicitly
             if (wm->bounds.P.similar(W->bounds.P, 0.02f))
             {   // replace
                 wm_destroy(wm);
@@ -871,41 +877,73 @@ BOOL ESceneWallmarkTool::AddWallmark(const Fvector& start, const Fvector& dir)
     return AddWallmark_internal(start, dir, m_ShName, m_TxName, m_MarkWidth, m_MarkHeight, m_MarkRotate);
 }
 
-BOOL ESceneWallmarkTool::MoveSelectedWallmarkTo(const Fvector& start, const Fvector& dir)
+ESceneWallmarkTool::wallmark* ESceneWallmarkTool::FindSingleSelectedWallmark()
 {
-    if (!m_Flags.is(flDrawWallmark))
-        return 0;
-    wallmark* wm = 0;
+    wallmark* sel = nullptr;
     for (WMSVecIt p_it = marks.begin(); p_it != marks.end(); p_it++)
     {
         for (WMVecIt m_it = (*p_it)->items.begin(); m_it != (*p_it)->items.end(); m_it++)
         {
             if ((*m_it)->flags.is(wallmark::flSelected))
             {
-                if (wm)
-                    return FALSE;
-                wm = *m_it;
+                if (sel)
+                    return nullptr;   // more than one selected
+                sel = *m_it;
             }
         }
     }
-    if ((0 != wm) && AddWallmark_internal(start, dir, wm->parent->sh_name, wm->parent->tx_name, wm->w, wm->h, wm->r))
+    return sel;
+}
+
+bool ESceneWallmarkTool::PickSurfacePoint(const Fvector& start, const Fvector& dir, Fvector& out_world)
+{
+    // ignore-use because we want the snap list regardless of the LeftBar
+    // toggle — the caller (drag control) auto-flips it on for the drag.
+    ObjectList* snap_list = Scene->GetSnapList(true);
+    if (!snap_list)
+        return false;
+    SPickQuery PQ;
+    if (!Scene->RayQuery(PQ, start, dir, UI->ZFar(), CDB::OPT_ONLYNEAREST | CDB::OPT_CULL, snap_list))
+        return false;
+    out_world.mad(PQ.m_Start, PQ.m_Direction, PQ.r_begin()->range);
+    return true;
+}
+
+BOOL ESceneWallmarkTool::MoveSelectedWallmarkTo(const Fvector& start, const Fvector& dir)
+{
+    if (!m_Flags.is(flDrawWallmark))
+        return FALSE;
+
+    wallmark* wm = FindSingleSelectedWallmark();
+    if (!wm)
+        return FALSE;
+
+    // Snapshot before mutation: the old wallmark may go away below.
+    shared_str sh = wm->parent->sh_name;
+    shared_str tx = wm->parent->tx_name;
+    float      w  = wm->w;
+    float      h  = wm->h;
+    float      r  = wm->r;
+
+    // Tell AddWallmark_internal to skip `wm` in the similar-bounds replace
+    // branch, otherwise it could free wm itself and we'd then double-pool it.
+    // Silent: drag may scrape off the snap-list surface for a frame; don't
+    // surface a dialog mid-drag.
+    if (!AddWallmark_internal(start, dir, sh, tx, w, h, r, wm, /*silent=*/true))
+        return FALSE;
+
+    // New wallmark created and inserted. Now remove the old one.
     {
-        // remove wm
-        for (WMSVecIt p_it = marks.begin(); p_it != marks.end(); p_it++)
+        WMVec& items = wm->parent->items;
+        WMVecIt it   = std::find(items.begin(), items.end(), wm);
+        if (it != items.end())
         {
-            for (WMVecIt m_it = (*p_it)->items.begin(); m_it != (*p_it)->items.end();)
-            {
-                if (*m_it == wm)
-                {
-                    wm_destroy(wm);
-                    *m_it = (*p_it)->items.back();
-                    (*p_it)->items.pop_back();
-                    return TRUE;
-                }
-            }
+            *it = items.back();
+            items.pop_back();
         }
     }
-    return FALSE;
+    wm_destroy(wm);
+    return TRUE;
 }
 
 void ESceneWallmarkTool::FillPropObjects(LPCSTR pref, PropItemVec& items)

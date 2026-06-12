@@ -63,7 +63,14 @@ private:
 
     void           RecurseTri(u32 t, Fmatrix& mView, wallmark& W);
     void           BuildMatrix(Fmatrix& mView, float inv_w, float inv_h, float angle, const Fvector& from);
-    BOOL           AddWallmark_internal(const Fvector& S, const Fvector& D, shared_str s, shared_str t, float w, float h, float r);
+    // exclude_from_similar: when a re-projection would land within 0.02 of an
+    // existing wallmark, that wallmark is normally replaced in place. Pass the
+    // about-to-be-deleted wallmark here so the replacement path skips it; the
+    // caller then deletes it explicitly. Without this guard the move path can
+    // double-pool the same wallmark.
+    // silent: suppress user-facing dialogs (used by the drag-translate path so
+    // we don't spam dialogs each frame the cursor falls off the snap list).
+    BOOL           AddWallmark_internal(const Fvector& S, const Fvector& D, shared_str s, shared_str t, float w, float h, float r, wallmark* exclude_from_similar = nullptr, bool silent = false);
 
     void           RefiningSlots();
 
@@ -181,4 +188,11 @@ public:
     virtual void GetBBox(Fbox& bb, bool bSelOnly);
     BOOL         AddWallmark(const Fvector& start, const Fvector& dir);
     BOOL         MoveSelectedWallmarkTo(const Fvector& start, const Fvector& dir);
+
+    // Drag helpers. Returns the lone selected wallmark, or nullptr if either
+    // nothing or more than one is selected. PickSurfacePoint resolves a ray
+    // against the snap-list surfaces and writes the world-space hit into
+    // out_world, returning false if the ray missed.
+    wallmark*    FindSingleSelectedWallmark();
+    bool         PickSurfacePoint(const Fvector& start, const Fvector& dir, Fvector& out_world);
 };
