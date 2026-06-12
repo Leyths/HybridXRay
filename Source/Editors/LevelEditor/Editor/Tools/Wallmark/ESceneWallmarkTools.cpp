@@ -205,6 +205,7 @@ void                   ESceneWallmarkTool::OnRender(int priority, bool strictB2F
     {
         wm_slot* slot = *slot_it;
         VERIFY(slot->shader);
+
         if ((u32(priority) == slot->shader->E[0]->flags.iPriority) && (strictB2F == !!(slot->shader->E[0]->flags.bStrictB2F)))
         {
             // Projection and xform
@@ -229,19 +230,26 @@ void                   ESceneWallmarkTool::OnRender(int priority, bool strictB2F
                     float ssa = W->bounds.R * W->bounds.R / dst;
                     if (ssa >= ssaCLIP)
                     {
-                        // fill wallmark
-                        u32 C     = color_rgba(255, 255, 255, 255);
+                        // fill wallmark.
+                        // The wallmark FF stage chain (B_SCREEN_SET blend ID 6)
+                        // uses D3DTOP_BLENDDIFFUSEALPHA on stage 1, which lerps
+                        // between DIFFUSE.rgb and the texture sample by
+                        // DIFFUSE.alpha. The runtime ships a TTL-based alpha
+                        // ramp; the editor wants the texture fully visible, so
+                        // alpha=0 (no fade) keeps the sampled texture intact.
+                        u32 C     = color_rgba(128, 128, 128, 0);
                         int t_cnt = W->verts.size() / 3;
                         for (int t_idx = 0; t_idx < t_cnt; t_idx++)
                         {
                             u32 w_count = u32(w_verts - w_start);
                             if (w_count + 3 > MAX_R_VERTEX)
                             {
-                                // Flush stream
+                                // Flush via EDevice->DP so every pass of the
+                                // shader element fires (mirrors AIMap and the
+                                // other editor render paths).
                                 RCache.Vertex.Unlock(w_count, hGeom->vb_stride);
-                                RCache.set_Shader(slot->shader);
-                                RCache.set_Geometry(hGeom);
-                                RCache.Render(D3DPT_TRIANGLELIST, w_offset, w_count / 3);
+                                EDevice->SetShader(slot->shader);
+                                EDevice->DP(D3DPT_TRIANGLELIST, hGeom, w_offset, w_count / 3);
                                 // Restart (re-lock/re-calc)
                                 w_verts = (FVF::LIT*)RCache.Vertex.Lock(MAX_R_VERTEX, hGeom->vb_stride, w_offset);
                                 w_start = w_verts;
@@ -263,9 +271,8 @@ void                   ESceneWallmarkTool::OnRender(int priority, bool strictB2F
             RCache.Vertex.Unlock(w_count, hGeom->vb_stride);
             if (w_count)
             {
-                RCache.set_Shader(slot->shader);
-                RCache.set_Geometry(hGeom);
-                RCache.Render(D3DPT_TRIANGLELIST, w_offset, w_count / 3);
+                EDevice->SetShader(slot->shader);
+                EDevice->DP(D3DPT_TRIANGLELIST, hGeom, w_offset, w_count / 3);
             }
             // Projection
             EDevice->mProject._43 = _43;
