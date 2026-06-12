@@ -13,8 +13,8 @@ void UIDOOneColor::Draw()
     const float frame_h   = ImGui::GetFrameHeight();
     const float spacing_y = ImGui::GetStyle().ItemSpacing.y;
     const float padding_y = ImGui::GetStyle().WindowPadding.y * 2.0f;
-    // Buttons column = 4 stacked buttons (color, X, >, <) with spacing between.
-    const float buttons_h = frame_h * 4.0f + spacing_y * 3.0f;
+    // Buttons column under the sub-header = 2 stacked buttons (Add, Remove).
+    const float buttons_h = frame_h * 2.0f + spacing_y;
     // List grows with item count; over-size by one spacing to keep the
     // last row from being clipped by the inner child's bottom border.
     const float list_h    = (float)list.size() * ImGui::GetTextLineHeightWithSpacing() + padding_y;
@@ -24,17 +24,31 @@ void UIDOOneColor::Draw()
     const float row_h     = list_h > buttons_h ? list_h : buttons_h;
 
     ImGui::BeginGroup();
-    ImGui::BeginGroup();
+    // Sub-header row: [color picker] [#RRGGBB] ........... [X close-row]
     if (ImGui::ColorEdit3("##value", Color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel))
     {
         DOShuffle->bModif = true;
     }
+    ImGui::SameLine();
+    const int r = (int)(Color[0] * 255.0f + 0.5f);
+    const int g = (int)(Color[1] * 255.0f + 0.5f);
+    const int b = (int)(Color[2] * 255.0f + 0.5f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("#%02X%02X%02X", r, g, b);
+    // Push the row-close button to the far right of the available content area.
+    const float close_x = ImGui::GetWindowContentRegionMax().x - frame_h;
+    ImGui::SameLine(close_x);
     if (ImGui::Button("X", ImVec2(frame_h, frame_h)))
     {
         DOShuffle->bModif = true;
         bOpen             = false;
     }
-    if (ImGui::Button(">", ImVec2(frame_h, frame_h)))
+    if (ImGui::IsItemHovered())
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+    // Main row: [Add >] / [< Remove] stacked on the left, detail list on the right.
+    ImGui::BeginGroup();
+    if (ImGui::Button("Add >", ImVec2(0, frame_h)))
     {
         if (DOShuffle->m_list_selected >= 0 && DOShuffle->m_list_selected < DOShuffle->m_list.size())
         {
@@ -42,7 +56,9 @@ void UIDOOneColor::Draw()
             DOShuffle->bModif = true;
         }
     }
-    if (ImGui::Button("<", ImVec2(frame_h, frame_h)))
+    if (ImGui::IsItemHovered())
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (ImGui::Button("< Remove", ImVec2(0, frame_h)))
     {
         if (list_index >= 0 && list_index < list.size())
         {
@@ -51,6 +67,8 @@ void UIDOOneColor::Draw()
             DOShuffle->bModif = true;
         }
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     ImGui::EndGroup();
     ImGui::SameLine();
     // Rows that match the user's current pick on the left pane are tinted so
