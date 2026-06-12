@@ -11,7 +11,7 @@ static void VisitSelectedItems(UITreeItem* parent, Fn&& fn)
     for (UITreeItem* Item: parent->Items)
     {
         UIObjectListItem* RItem = static_cast<UIObjectListItem*>(Item);
-        if (RItem->bIsSelected && RItem->Object)
+        if (RItem->bIsSelected && (RItem->Object || RItem->m_Wallmark))
             fn(RItem);
         VisitSelectedItems(Item, fn);
     }
@@ -75,6 +75,12 @@ void UIObjectList::Draw()
         if (ImGui::Button("Show Selected"_RU >> u8"Показать выбранное", ImVec2(-1, 0)))
         {
             VisitSelectedItems(&m_Root, [](UIObjectListItem* RItem) {
+                if (RItem->IsWallmark())
+                {
+                    RItem->m_Wallmark->flags.set(ESceneWallmarkTool::wallmark::flHidden, FALSE);
+                    UI->RedrawScene();
+                    return;
+                }
                 RItem->Object->Show(TRUE);
                 if (RItem->Object->FClassID == OBJCLASS_FOLDER)
                     ((CFolderObject*)RItem->Object)->PropagateShow(true);
@@ -86,6 +92,18 @@ void UIObjectList::Draw()
         if (ImGui::Button("Hide Selected"_RU >> u8"Скрыть выбранное", ImVec2(-1, 0)))
         {
             VisitSelectedItems(&m_Root, [](UIObjectListItem* RItem) {
+                if (RItem->IsWallmark())
+                {
+                    RItem->m_Wallmark->flags.set(ESceneWallmarkTool::wallmark::flHidden, TRUE);
+                    // Hidden wallmarks can't be ray-picked either, so drop the
+                    // selection state — otherwise a later Show would resurrect
+                    // them in their previous selected state, which is fine, but
+                    // keeping them "selected while hidden" leaks ghost selection.
+                    RItem->m_Wallmark->flags.set(ESceneWallmarkTool::wallmark::flSelected, FALSE);
+                    RItem->bIsSelected = false;
+                    UI->RedrawScene();
+                    return;
+                }
                 RItem->Object->Show(FALSE);
                 if (RItem->Object->FClassID == OBJCLASS_FOLDER)
                     ((CFolderObject*)RItem->Object)->PropagateShow(false);
@@ -98,6 +116,13 @@ void UIObjectList::Draw()
         if (ImGui::Button("Focus on Selected"_RU >> u8"Фокус на выбранном", ImVec2(-1, 0)))
         {
             VisitSelectedItems(&m_Root, [](UIObjectListItem* RItem) {
+                if (RItem->IsWallmark())
+                {
+                    // Use the wallmark's bbox directly; it has no Select()
+                    // call but the click handler already set the flag.
+                    EDevice->m_Camera.ZoomExtents(RItem->m_Wallmark->bbox);
+                    return;
+                }
                 RItem->Object->Select(true);
                 Fbox bb;
                 if (RItem->Object->GetBox(bb))
@@ -198,6 +223,49 @@ void UIObjectList::Refresh()
                     UIObjectListItem* Item = static_cast<UIObjectListItem*>(Form->m_Root.AppendItem(Obj->GetName(), {}, 0));
                     VERIFY(Item);
                     Item->Object = Obj;
+                }
+            }
+        }
+    }
+    else if (Form->m_cur_cls == OBJCLASS_WM)
+    {
+        // Wallmarks aren't CCustomObjects (the wallmark tool stores them as
+        // raw structs in `wm_slot::items`). We emit one list row per
+        // wallmark, labelled "<host-object>/<texture-basename> [#N]" when
+        // the host scene object is known. Wallmarks loaded from older saves
+        // have no host info, so they fall back to "<texture-basename> [#N]".
+        ESceneWallmarkTool* wmt = (ESceneWallmarkTool*)Scene->GetTool(OBJCLASS_WM);
+        if (wmt)
+        {
+            for (ESceneWallmarkTool::wm_slot* slot: wmt->marks)
+            {
+                if (!slot)
+                    continue;
+                const char* tx_full = slot->tx_name.c_str() ? slot->tx_name.c_str() : "";
+                const char* tx_base = strrchr(tx_full, '\\');
+                tx_base             = tx_base ? tx_base + 1 : tx_full;
+                if (!*tx_base)
+                    tx_base = "wallmark";
+                int idx = 0;
+                for (ESceneWallmarkTool::wallmark* w: slot->items)
+                {
+                    // Lazy resolve: loaded-from-disk wallmarks have no
+                    // src_obj_name; recover it via a ray-pick from the
+                    // wallmark's surface position. Cached on the wallmark
+                    // so subsequent refreshes are free.
+                    wmt->EnsureHostObjectName(w);
+
+                    string256   buf;
+                    const char* host = w->src_obj_name.size() ? w->src_obj_name.c_str() : nullptr;
+                    if (host)
+                        xr_sprintf(buf, sizeof(buf), "%s/%s [#%d]", host, tx_base, idx);
+                    else
+                        xr_sprintf(buf, sizeof(buf), "%s [#%d]", tx_base, idx);
+                    ++idx;
+                    UIObjectListItem* Item = static_cast<UIObjectListItem*>(Form->m_Root.AppendItem(buf, {}, 0));
+                    VERIFY(Item);
+                    Item->m_Wallmark  = w;
+                    Item->bIsSelected = !!w->flags.is(ESceneWallmarkTool::wallmark::flSelected);
                 }
             }
         }

@@ -4,6 +4,7 @@ UIObjectListItem::UIObjectListItem(shared_str Name): UITreeItem(Name, {})
 {
     bIsSelected = false;
     Object      = nullptr;
+    m_Wallmark  = nullptr;
 }
 
 UIObjectListItem::~UIObjectListItem() {}
@@ -13,14 +14,18 @@ UIObjectListItem::~UIObjectListItem() {}
 // doesn't contain the filter substring would `return` early in Draw() and take
 // every matching child down with it. That made the search box useless for any
 // item that lived inside a folder.
+//
+// Compares the displayed Name field rather than Object->GetName() so wallmark
+// items (which have no CCustomObject) participate too — their name is the
+// synthetic "<texture> [#N]" set at refresh time.
 bool UIObjectListItem::MatchesFilterRecursive(UIObjectListItem* item)
 {
-    if (!item || !item->Object)
+    if (!item)
         return false;
     const char* filter = UIObjectList::Form->m_Filter;
     if (filter[0] == 0)
         return true;
-    const char* name = item->Object->GetName();
+    const char* name = item->Name.c_str();
     if (name && strstr(name, filter) != 0)
         return true;
     for (UITreeItem* child: item->Items)
@@ -33,6 +38,11 @@ bool UIObjectListItem::MatchesFilterRecursive(UIObjectListItem* item)
 
 void UIObjectListItem::Draw()
 {
+    if (m_Wallmark)
+    {
+        DrawWallmarkRow();
+        return;
+    }
     if (!Object)
         return;
 
@@ -290,4 +300,77 @@ void UIObjectListItem::ClearSelcted(UIObjectListItem* Without)
 UITreeItem* UIObjectListItem::CreateItem(shared_str Name, SLocalizedString _HintText)
 {
     return xr_new<UIObjectListItem>(Name);
+}
+
+// Wallmark items get a simplified row: no folder/drag-drop, just a clickable
+// label. Click selects (sets flSelected); Show/Hide buttons toggle flHidden
+// (per-wallmark visibility). Reparent and folder hierarchy aren't supported.
+void UIObjectListItem::DrawWallmarkRow()
+{
+    if (!m_Wallmark)
+        return;
+
+    if (UIObjectList::Form->m_Filter[0])
+    {
+        if (!MatchesFilterRecursive(this))
+            return;
+    }
+
+    const bool hidden = !!m_Wallmark->flags.is(ESceneWallmarkTool::wallmark::flHidden);
+    switch (UIObjectList::Form->m_Mode)
+    {
+        case UIObjectList::M_All:
+            break;
+        case UIObjectList::M_Visible:
+            if (hidden)
+                return;
+            break;
+        case UIObjectList::M_Inbvisible:
+            if (!hidden)
+                return;
+            break;
+        default:
+            break;
+    }
+
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+
+    ImGuiTreeNodeFlags Flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    const bool         wm_selected_in_scene = !!m_Wallmark->flags.is(ESceneWallmarkTool::wallmark::flSelected);
+    if (wm_selected_in_scene)
+        Flags |= ImGuiTreeNodeFlags_Bullet;
+    if (bIsSelected)
+        Flags |= ImGuiTreeNodeFlags_Selected;
+
+    if (hidden)
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+
+    ImGui::TreeNodeEx(Name.c_str(), Flags);
+
+    if (hidden)
+        ImGui::PopStyleVar();
+
+    if (ImGui::IsItemClicked())
+    {
+        ESceneWallmarkTool* wmt = (ESceneWallmarkTool*)Scene->GetTool(OBJCLASS_WM);
+        if (ImGui::GetIO().KeyCtrl)
+        {
+            // Ctrl-click: toggle this wallmark's selection, leave others alone.
+            m_Wallmark->flags.invert(ESceneWallmarkTool::wallmark::flSelected);
+            bIsSelected = m_Wallmark->flags.is(ESceneWallmarkTool::wallmark::flSelected);
+        }
+        else
+        {
+            // Plain click: exclusive select.
+            if (wmt)
+                wmt->SelectObjects(false);
+            UIObjectList::Form->m_Root.ClearSelcted();
+            m_Wallmark->flags.set(ESceneWallmarkTool::wallmark::flSelected, TRUE);
+            bIsSelected = true;
+        }
+        UIObjectList::Form->m_LastSelected = this;
+        UI->RedrawScene();
+        ExecCommand(COMMAND_UPDATE_PROPERTIES);
+    }
 }

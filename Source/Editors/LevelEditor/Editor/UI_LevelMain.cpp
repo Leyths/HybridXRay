@@ -31,6 +31,11 @@ CCommandVar CLevelTool::CommandChangeTarget(CCommandVar p1, CCommandVar p2)
     {
         SetTarget(p1, p2);
         ExecCommand(COMMAND_UPDATE_PROPERTIES);
+        // Refresh the Object List so its m_cur_cls follows the active tool.
+        // Without this, switching between class tools left the list stuck on
+        // whichever class was active at the last EScene::Modified() (the only
+        // other place that calls Refresh).
+        UIObjectList::Refresh();
         return TRUE;
     }
     else

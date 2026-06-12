@@ -38,6 +38,8 @@ int ESceneWallmarkTool::RaySelect(int flag, float& distance, const Fvector& star
         wm_slot* slot = *slot_it;
         for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
         {
+            if ((*w_it)->flags.is(wallmark::flHidden))
+                continue;
             Fvector pt;
             if (Fbox::rpOriginOutside == (*w_it)->bbox.Pick2(start, direction, pt))
             {
@@ -70,8 +72,10 @@ int ESceneWallmarkTool::FrustumSelect(int flag, const CFrustum& frustum)
     {
         for (WMVecIt m_it = (*p_it)->items.begin(); m_it != (*p_it)->items.end(); m_it++)
         {
-            wallmark* W    = *m_it;
-            u32       mask = 0xffff;
+            wallmark* W = *m_it;
+            if (W->flags.is(wallmark::flHidden))
+                continue;
+            u32 mask = 0xffff;
             if (frustum.testSAABB(W->bounds.P, W->bounds.R, W->bbox.data(), mask))
             {
                 if (-1 == flag)
@@ -224,6 +228,8 @@ void                   ESceneWallmarkTool::OnRender(int priority, bool strictB2F
             {
                 wallmark* W = *w_it;
                 VERIFY3(W->verts.size() <= MAX_R_VERTEX, "ERROR: Invalid wallmark.", *slot->tx_name);
+                if (W->flags.is(wallmark::flHidden))
+                    continue;
                 if (RImplementation.ViewBase.testSphere_dirty(W->bounds.P, W->bounds.R))
                 {
                     float dst = EDevice->vCameraPosition.distance_to_sqr(W->bounds.P);
@@ -283,6 +289,8 @@ void                   ESceneWallmarkTool::OnRender(int priority, bool strictB2F
             for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
             {
                 wallmark* W = *w_it;
+                if (W->flags.is(wallmark::flHidden))
+                    continue;
                 if (W->flags.is(wallmark::flSelected))
                     if (RImplementation.ViewBase.testSphere_dirty(W->bounds.P, W->bounds.R))
                         DU_impl.DrawSelectionBoxB(W->bbox);
@@ -542,15 +550,120 @@ void ESceneWallmarkTool::SaveStream(IWriter& F)
     F.close_chunk();
 }
 
-bool ESceneWallmarkTool::LoadSelection(IReader& F)
-{
-    Clear();
-    return LoadStream(F);
-}
-
+// Selection save: write only the wallmarks that are currently selected,
+// without the tool-level state (flags / width / height / shader / texture).
+// LoadSelection appends these to whatever the user already has placed and
+// promotes them to the selected set, which is the copy/paste behavior the
+// rest of the editor expects.
 void ESceneWallmarkTool::SaveSelection(IWriter& F)
 {
-    SaveStream(F);
+    F.open_chunk(WM_CHUNK_VERSION);
+    F.w_u16(WM_VERSION);
+    F.close_chunk();
+
+    F.open_chunk(WM_CHUNK_ITEMS2);
+    u32 chunk_idx = 0;
+    for (WMSVecIt slot_it = marks.begin(); slot_it != marks.end(); slot_it++)
+    {
+        wm_slot* slot = *slot_it;
+        // Skip slots with no selected items so the chunk stays compact.
+        u32 selected_count = 0;
+        for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
+            if ((*w_it)->flags.is(wallmark::flSelected))
+                ++selected_count;
+        if (selected_count == 0)
+            continue;
+
+        F.open_chunk(chunk_idx++);
+        F.w_u32(selected_count);
+        F.w_stringZ(slot->sh_name);
+        F.w_stringZ(slot->tx_name);
+        for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
+        {
+            wallmark* W = *w_it;
+            if (!W->flags.is(wallmark::flSelected))
+                continue;
+            F.w(&W->flags, sizeof(W->flags));
+            F.w(&W->bbox, sizeof(W->bbox));
+            F.w(&W->bounds, sizeof(W->bounds));
+            F.w_float(W->w);
+            F.w_float(W->h);
+            F.w_float(W->r);
+            F.w_u32(W->verts.size());
+            F.w(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
+        }
+        F.close_chunk();
+    }
+    F.close_chunk();
+}
+
+bool ESceneWallmarkTool::LoadSelection(IReader& F)
+{
+    // Append-mode: don't Clear, and don't read the tool-level FLAGS/PARAMS
+    // chunks (the user's current shader/width/etc. should stay put). Only
+    // ingest the per-slot ITEMS2 chunk.
+    u16 version = 0;
+    if (!F.r_chunk(WM_CHUNK_VERSION, &version))
+        return false;
+    if (version != 0x0003 && version != WM_VERSION)
+    {
+        ELog.Msg(mtError, "& Static Wallmark: Unsupported version.");
+        return false;
+    }
+
+    // Deselect existing wallmarks so the newly-pasted set becomes the active
+    // selection — matches how scene-object paste behaves.
+    for (WMSVecIt slot_it = marks.begin(); slot_it != marks.end(); slot_it++)
+        for (WMVecIt w_it = (*slot_it)->items.begin(); w_it != (*slot_it)->items.end(); w_it++)
+            (*w_it)->flags.set(wallmark::flSelected, FALSE);
+
+    IReader* OBJ = F.open_chunk(WM_CHUNK_ITEMS2);
+    if (!OBJ)
+        OBJ = F.open_chunk(WM_CHUNK_ITEMS);
+    if (!OBJ)
+        return true;   // no items in clipboard payload — nothing to paste, not an error
+
+    IReader* O = OBJ->open_chunk(0);
+    for (int count = 1; O; count++)
+    {
+        u32 item_count = O->r_u32();
+        if (item_count)
+        {
+            shared_str tex_name, sh_name;
+            O->r_stringZ(sh_name);
+            O->r_stringZ(tex_name);
+            wm_slot* slot = FindSlot(sh_name, tex_name);
+            if (!slot)
+                slot = AppendSlot(sh_name, tex_name);
+            if (slot)
+            {
+                for (u32 i = 0; i < item_count; ++i)
+                {
+                    wallmark* W = wm_allocate();
+                    O->r(&W->flags, sizeof(W->flags));
+                    // Force the pasted wallmark to be selected, regardless of
+                    // what its serialized flags said.
+                    W->flags.set(wallmark::flSelected, TRUE);
+                    O->r(&W->bbox, sizeof(W->bbox));
+                    O->r(&W->bounds, sizeof(W->bounds));
+                    // Some legacy saves (version 0x0003 in LoadStream) didn't
+                    // carry w/h/r per item; for safety we assume the WM_VERSION
+                    // (v4) layout since SaveSelection above always emits it.
+                    W->w = O->r_float();
+                    W->h = O->r_float();
+                    W->r = O->r_float();
+                    W->parent = slot;
+                    W->verts.resize(O->r_u32());
+                    O->r(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
+                    slot->items.push_back(W);
+                }
+            }
+        }
+        O->close();
+        O = OBJ->open_chunk(count);
+    }
+    OBJ->close();
+    return true;
 }
 
 bool ESceneWallmarkTool::Export(LPCSTR path)
@@ -612,6 +725,7 @@ ESceneWallmarkTool::wallmark* ESceneWallmarkTool::wm_allocate()
     }
 
     W->verts.clear();
+    W->src_obj_name = "";   // reset stale name from a previously pooled wallmark
     return W;
 }
 // destroy
@@ -818,6 +932,14 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
     W->h        = height;
     W->r        = rotate;
 
+    // Capture the host scene object's name so the Object List can label this
+    // wallmark with "<object>/<texture>". Best-effort: if the ray happens to
+    // miss the scene-object list (e.g. only terrain/non-CCustomObject geometry
+    // is in the snap list), leave it empty and the label falls back to just
+    // the texture.
+    if (CCustomObject* host = Scene->RayPickObject(dist, start, dir, OBJCLASS_SCENEOBJECT, 0, snap_list))
+        W->src_obj_name = host->GetName();
+
     RecurseTri(0, mView, *W);
 
     // calc sphere
@@ -907,6 +1029,37 @@ bool ESceneWallmarkTool::PickSurfacePoint(const Fvector& start, const Fvector& d
         return false;
     out_world.mad(PQ.m_Start, PQ.m_Direction, PQ.r_begin()->range);
     return true;
+}
+
+void ESceneWallmarkTool::EnsureHostObjectName(wallmark* w)
+{
+    if (!w || w->src_obj_name.size() > 0)
+        return;
+    if (w->verts.size() < 3)
+        return;
+
+    // Recover an outward surface normal from the first triangle. Wallmark
+    // verts lie on the host surface, so a face-normal is identical to the
+    // surface normal at the contact point.
+    Fvector normal;
+    normal.mknormal(w->verts[0].p, w->verts[1].p, w->verts[2].p);
+    if (normal.square_magnitude() < EPS)
+        return;
+
+    // Step out along the normal and ray-pick back into the surface. The
+    // out-step gives the ray clearance from the wallmark's own z-bias; the
+    // probe distance comfortably covers small geometry displacement.
+    Fvector ray_start;
+    ray_start.mad(w->bounds.P, normal, 0.25f);
+    Fvector ray_dir = normal;
+    ray_dir.invert();
+
+    // Search ALL scene objects, not just the snap list — loaded wallmarks
+    // may predate the current snap-list contents, and we want the label to
+    // resolve regardless.
+    CCustomObject* host = Scene->RayPickObject(0.50f, ray_start, ray_dir, OBJCLASS_SCENEOBJECT, 0, nullptr);
+    if (host)
+        w->src_obj_name = host->GetName();
 }
 
 BOOL ESceneWallmarkTool::MoveSelectedWallmarkTo(const Fvector& start, const Fvector& dir)

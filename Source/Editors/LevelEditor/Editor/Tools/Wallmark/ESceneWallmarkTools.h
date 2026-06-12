@@ -11,7 +11,8 @@ public:
     {
         enum
         {
-            flSelected = (1 << 0)
+            flSelected = (1 << 0),
+            flHidden   = (1 << 1),   // per-wallmark visibility for the Object List Show/Hide buttons
         };
         wm_slot*   parent;
         float      w, h, r;
@@ -19,6 +20,12 @@ public:
         Fbox       bbox;
         Fsphere    bounds;
         LITVertVec verts;
+        // Name of the scene object the wallmark sits on. Set at placement /
+        // drag-move time, or lazily resolved at first display via a ray-pick
+        // from the wallmark's surface position. Cached in-memory only — the
+        // save/load chunk format doesn't carry it, so loaded wallmarks start
+        // empty and get resolved on demand. Used for the Object List label.
+        shared_str src_obj_name;
         wallmark()
         {
             flags.zero();
@@ -195,4 +202,10 @@ public:
     // out_world, returning false if the ray missed.
     wallmark*    FindSingleSelectedWallmark();
     bool         PickSurfacePoint(const Fvector& start, const Fvector& dir, Fvector& out_world);
+
+    // Lazy host-object resolver for the Object List label. If `w->src_obj_name`
+    // is empty (typical for wallmarks loaded from disk), shoots a short ray
+    // along the wallmark's surface normal back into the snap list to find the
+    // scene object beneath, and caches the result on the wallmark.
+    void         EnsureHostObjectName(wallmark* w);
 };
