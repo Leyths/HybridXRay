@@ -79,7 +79,7 @@ void UIDOTool::Draw()
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::Separator();
             ImGui::Separator();
-            if (ImGui::Button("Object List"_RU >> u8"Открыть таблицу", ImVec2(-1, 0)))
+            if (ImGui::Button("Object List / Details Mapping"_RU >> u8"Открыть таблицу", ImVec2(-1, 0)))
             {
                 m_DOShuffle = true;
                 UIDOShuffle::Show(DM);

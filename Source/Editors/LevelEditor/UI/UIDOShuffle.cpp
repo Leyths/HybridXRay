@@ -41,24 +41,33 @@ void UIDOShuffle::Draw()
         ImGui::Image(m_RealTexture ? m_RealTexture : m_TextureNull->surface_get(), ImVec2(250, 200));
 
         {
-            int selected = m_list_selected;
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::ListBox(
-                    "##list", &selected,
-                    [](void* data, int ind, const char** out) -> bool
-                    {
-                        auto item = reinterpret_cast<xr_vector<xr_string>*>(data)->at(ind).c_str();
-                        *out      = item;
-                        return true;
-                    },
-                    reinterpret_cast<void*>(&m_list), m_list.size(), 15))
+            // Detail list fills the remaining vertical space on the left side,
+            // minus the buttons row and the Properties pane below it. Greying
+            // unmapped entries makes it obvious which details haven't been
+            // assigned to any color marker yet.
+            const float buttons_h = ImGui::GetFrameHeightWithSpacing();
+            const float props_h   = 180.0f;
+            const float reserve   = buttons_h + props_h + ImGui::GetStyle().ItemSpacing.y * 2;
+
+            ImGui::BeginChild("##details", ImVec2(0, -reserve), true);
+            for (int i = 0; i < (int)m_list.size(); ++i)
             {
-                if (m_list_selected != selected)
+                const xr_string& name      = m_list[i];
+                const bool       is_mapped = IsDetailMapped(name);
+                if (!is_mapped)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                if (ImGui::Selectable(name.c_str(), m_list_selected == i))
                 {
-                    m_list_selected = selected;
-                    OnItemFocused(m_list[selected].c_str());
+                    if (m_list_selected != i)
+                    {
+                        m_list_selected = i;
+                        OnItemFocused(name.c_str());
+                    }
                 }
+                if (!is_mapped)
+                    ImGui::PopStyleColor();
             }
+            ImGui::EndChild();
         }
         {
             if (ImGui::Button(" + ", ImVec2(0, ImGui::GetFrameHeight())))
@@ -304,6 +313,19 @@ void UIDOShuffle::OnItemFocused(const char* name)
     PHelper().CreateFlag32(items, "No Waving"_RU >> u8"Без размахивания", &dd->m_Flags, DO_NO_WAVING);
 
     m_Props->AssignItems(items);
+}
+
+bool UIDOShuffle::IsDetailMapped(const xr_string& name) const
+{
+    for (UIDOOneColor* one_color: m_color_indices)
+    {
+        for (const xr_string& mapped: one_color->list)
+        {
+            if (mapped == name)
+                return true;
+        }
+    }
+    return false;
 }
 
 bool UIDOShuffle::FindItem(const char* name)

@@ -36,6 +36,12 @@ private:
     int                  m_list_selected;
     bool                 FindItem(const char* name);
 
+public:
+    // True if `name` appears in at least one color index's mapping list on
+    // the right pane. Used by the left list to grey out unmapped details and
+    // by UIDOOneColor to highlight rows matching the user's current pick.
+    bool IsDetailMapped(const xr_string& name) const;
+
 private:
     bool bModif;
     bool m_ChooseObject;
