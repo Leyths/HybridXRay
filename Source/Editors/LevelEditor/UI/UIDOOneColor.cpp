@@ -34,11 +34,14 @@ void UIDOOneColor::Draw()
     const int g = (int)(Color[1] * 255.0f + 0.5f);
     const int b = (int)(Color[2] * 255.0f + 0.5f);
     ImGui::AlignTextToFramePadding();
-    ImGui::Text("#%02X%02X%02X", r, g, b);
+    // Leading spaces give the hex label a visible gap from the swatch;
+    // ImGui::SameLine spacing alone was getting eaten by the ColorEdit border.
+    ImGui::Text("   #%02X%02X%02X", r, g, b);
     // Push the row-close button to the far right of the available content area.
-    const float close_x = ImGui::GetWindowContentRegionMax().x - frame_h;
+    const float close_w = ImGui::CalcTextSize("Clear").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float close_x = ImGui::GetWindowContentRegionMax().x - close_w;
     ImGui::SameLine(close_x);
-    if (ImGui::Button("X", ImVec2(frame_h, frame_h)))
+    if (ImGui::Button("Clear", ImVec2(close_w, frame_h)))
     {
         DOShuffle->bModif = true;
         bOpen             = false;
@@ -48,7 +51,7 @@ void UIDOOneColor::Draw()
 
     // Main row: [Add >] / [< Remove] stacked on the left, detail list on the right.
     ImGui::BeginGroup();
-    if (ImGui::Button("Add >", ImVec2(0, frame_h)))
+    if (ImGui::Button(">", ImVec2(frame_h, frame_h)))
     {
         if (DOShuffle->m_list_selected >= 0 && DOShuffle->m_list_selected < DOShuffle->m_list.size())
         {
@@ -58,7 +61,7 @@ void UIDOOneColor::Draw()
     }
     if (ImGui::IsItemHovered())
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    if (ImGui::Button("< Remove", ImVec2(0, frame_h)))
+    if (ImGui::Button("<", ImVec2(frame_h, frame_h)))
     {
         if (list_index >= 0 && list_index < list.size())
         {
