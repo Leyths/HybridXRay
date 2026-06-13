@@ -108,6 +108,7 @@ void UITopBarForm::Draw()
         }
         ImGui::SameLine();
 
+#if 0   // 'Need rebuild CFORM/AIMAP/GAME GRAPH' buttons hidden
         m_tCForm->Load();
         if (ImGui::ImageButton(m_tCForm->surface_get(), ImVec2(20, 20), ImVec2(0, 0), ImVec2(1, 1), 0))
         {
@@ -141,6 +142,7 @@ void UITopBarForm::Draw()
             ImGui::SetTooltip("Need rebuild GAME GRAPH"_RU >> u8"Need rebuild GAME GRAPH");
         }
         ImGui::SameLine();
+#endif
 
         if (LTools->IsCompilerRunning() || LTools->IsGameRunning())
         {

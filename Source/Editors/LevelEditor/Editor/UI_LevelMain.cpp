@@ -1475,6 +1475,7 @@ bool CLevelMain::KeyDown(WORD Key, TShiftState Shift)
 
 void CLevelMain::OnStats(CGameFont* font)
 {
+#if 0   // 'NEED REBUILD CFORM/AIMAP/GAME GRAPH' viewport overlay hidden
     float Height = font->GetHeight();
     font->SetColor(color_rgba(255, 0, 0, 255));
     font->SetHeight(11);
@@ -1491,6 +1492,7 @@ void CLevelMain::OnStats(CGameFont* font)
         font->OutNext("NEED REBUILD GAME GRAPH");
     }
     font->SetHeight(Height);
+#endif
 }
 
 bool CLevelMain::IsPlayInEditor()
