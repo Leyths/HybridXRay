@@ -872,6 +872,15 @@ bool TUI::ApplyShortCut(DWORD Key, TShiftState Shift)
 {
     VERIFY(m_bReady);
 
+    // Walk navigation: ESC is the only way out, and it has to win against
+    // the etaSelect handler below (which would otherwise eat the key without
+    // exiting the mode).
+    if (EDevice->m_Camera.IsInWalkMode() && Key == VK_ESCAPE)
+    {
+        EDevice->m_Camera.ExitWalkMode();
+        return true;
+    }
+
     if (ApplyGlobalShortCut(Key, Shift))
         return true;
 

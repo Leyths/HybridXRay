@@ -99,6 +99,15 @@ bool TUI::KeyDown(WORD Key, TShiftState Shift)
 
     if (Key == 0xC0)
     {
+        // Shift+~ enters walk navigation (Blender-style). The plain ~ keeps
+        // opening the console. WantCaptureKeyboard guards the case where the
+        // user is holding Shift while typing in an ImGui text field — we
+        // don't want a stray ~ to yank them out of the field.
+        if ((Shift & ssShift) && !ImGui::GetIO().WantCaptureKeyboard)
+        {
+            EDevice->m_Camera.EnterWalkMode();
+            return true;
+        }
         Console->Show();
         return true;
     }

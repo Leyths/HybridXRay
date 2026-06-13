@@ -4,6 +4,10 @@
 #include "UI_Camera.h"
 #include "ui_main.h"
 #include "ui_toolscustom.h"
+// pInput->iGetAsyncKeyState — used by walk navigation to poll WASD/QE per
+// frame. Bypasses ImGui keyboard capture, so movement keeps working even
+// while a property panel has focus.
+#include "../../../xrEngine/xr_input.h"
 
 //------------------------------------------------------------------------------
 CUI_Camera* CUICamera = 0;
@@ -23,6 +27,8 @@ CUI_Camera::CUI_Camera()
     m_FlyAltitude = 1.8f;
 
     m_bMoving     = false;
+    m_WalkMode    = false;
+    m_WalkSpeed   = 5.f;
 }
 
 CUI_Camera::~CUI_Camera() {}
@@ -181,6 +187,46 @@ static const Fvector down_dir = {0.f, -1.f, 0.f};
 
 void                 CUI_Camera::Update(float dt)
 {
+    if (m_WalkMode)
+    {
+        // Mouse wheel adjusts base speed in 10% steps (compounded per frame
+        // — typical wheel hardware fires a delta of ±1 per detent, so a
+        // single notch = ~10% change). Read here rather than via an
+        // IR_OnMouseWheel override because nothing in the editor consumes
+        // wheel events except ImGui, which leaves io.MouseWheel set when
+        // no window captures the scroll.
+        const float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f)
+            BumpWalkSpeed(wheel > 0.0f ? 1.1f : 1.0f / 1.1f);
+
+        // Per-frame poll, not event-driven, so holding multiple keys produces
+        // smooth diagonal motion. iGetAsyncKeyState reads DInput state and
+        // ignores ImGui's keyboard capture, which is what we want — once Walk
+        // mode is on, navigation takes priority over any focused UI panel.
+        const float boost = pInput->iGetAsyncKeyState(DIK_LSHIFT) ? 4.0f : 1.0f;
+        const float slow  = pInput->iGetAsyncKeyState(DIK_LMENU)  ? 0.25f : 1.0f;
+        const float step  = m_WalkSpeed * boost * slow * dt;
+
+        Fvector     fwd   = m_CamMat.k;   // view forward
+        Fvector     right = m_CamMat.i;   // view right
+        Fvector     up    = {0.f, 1.f, 0.f};   // world up — Q/E lift/sink regardless of pitch
+
+        Fvector     delta = {0.f, 0.f, 0.f};
+        if (pInput->iGetAsyncKeyState(DIK_W)) delta.mad(fwd,    step);
+        if (pInput->iGetAsyncKeyState(DIK_S)) delta.mad(fwd,   -step);
+        if (pInput->iGetAsyncKeyState(DIK_D)) delta.mad(right,  step);
+        if (pInput->iGetAsyncKeyState(DIK_A)) delta.mad(right, -step);
+        if (pInput->iGetAsyncKeyState(DIK_E)) delta.mad(up,     step);
+        if (pInput->iGetAsyncKeyState(DIK_Q)) delta.mad(up,    -step);
+
+        if (!fis_zero(delta.x) || !fis_zero(delta.y) || !fis_zero(delta.z))
+        {
+            m_Position.add(delta);
+            UI->RedrawScene();
+        }
+        BuildCamera();
+        return;
+    }
     if (m_bMoving)
     {
         BOOL bLeftDn  = m_Shift & ssLeft;
@@ -279,6 +325,18 @@ bool CUI_Camera::MoveEnd(TShiftState Shift)
 
 bool CUI_Camera::Process(TShiftState Shift, int dx, int dy)
 {
+    if (m_WalkMode)
+    {
+        // Walk mode owns the cursor — recenter it each frame so the next
+        // mouse-delta event keeps arriving relative to the same anchor. No
+        // mouse-button hold required; any movement rotates.
+        if (dx || dy)
+        {
+            SetCursorPos(m_StartPos.x, m_StartPos.y);
+            Rotate(dx, dy);
+        }
+        return true;
+    }
     if (m_bMoving)
     {
         m_Shift = Shift;
@@ -454,4 +512,40 @@ void CUI_Camera::ArcBall(TShiftState Shift, float dx, float dy)
     m_Position.add(m_Target);
 
     BuildCamera();
+}
+
+// ---------------------------------------------------------------------------
+// Walk navigation mode
+// ---------------------------------------------------------------------------
+
+void CUI_Camera::EnterWalkMode()
+{
+    if (m_WalkMode)
+        return;
+    UI->IR_GetMousePosScreen(m_StartPos);
+    ShowCursor(FALSE);
+    m_WalkMode = true;
+    // The existing freelook code keys off m_bMoving — keep it in sync so
+    // Process() still receives mouse deltas through TUI::IR_OnMouseMove
+    // even though no mouse button is down.
+    m_bMoving  = true;
+    UI->RedrawScene();
+}
+
+void CUI_Camera::ExitWalkMode()
+{
+    if (!m_WalkMode)
+        return;
+    SetCursorPos(m_StartPos.x, m_StartPos.y);
+    ShowCursor(TRUE);
+    m_WalkMode = false;
+    m_bMoving  = false;
+    UI->RedrawScene();
+}
+
+void CUI_Camera::BumpWalkSpeed(float mul)
+{
+    m_WalkSpeed *= mul;
+    if (m_WalkSpeed < 0.5f)  m_WalkSpeed = 0.5f;
+    if (m_WalkSpeed > 50.0f) m_WalkSpeed = 50.0f;
 }

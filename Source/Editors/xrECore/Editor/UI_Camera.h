@@ -17,6 +17,12 @@ class ECORE_API CUI_Camera
     Ivector2     m_StartPos;
     float        m_FlySpeed;
     float        m_FlyAltitude;
+    // Modal walk-navigation (Shift+~ to enter, ESC to exit). Distinct from
+    // m_bMoving's hold-Shift+LMB freelook: the cursor stays captured until
+    // ExitWalkMode runs, and motion is driven by per-frame WASD/QE polling
+    // rather than mouse-button state.
+    bool         m_WalkMode;
+    float        m_WalkSpeed;
 
     Fmatrix      m_CamMat;
     Fvector      m_HPB;
@@ -67,6 +73,16 @@ public:
     bool Process(TShiftState Shift, int dx, int dy);
     bool KeyDown(WORD Key, TShiftState Shift);
     bool KeyUp(WORD Key, TShiftState Shift);
+
+    // Walk navigation. Entry hides the cursor and stays captured until
+    // ExitWalkMode runs; ESC is wired to the exit path in ApplyShortCut.
+    void EnterWalkMode();
+    void ExitWalkMode();
+    bool IsInWalkMode() const
+    {
+        return m_WalkMode;
+    }
+    void BumpWalkSpeed(float mul);
 
     void ViewFront()
     {
