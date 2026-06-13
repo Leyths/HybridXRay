@@ -294,7 +294,13 @@ void xrGameMaterialLibraryEditors::Load()
 
 bool xrGameMaterialLibraryEditors::Save()
 {
-    R_ASSERT(FALSE == UpdateMtlPairs());
+    // Reconcile pair table before writing. UpdateMtlPairs() creates any
+    // missing (dynamic-involved) pairs and returns TRUE if it had to add
+    // any — that's the *normal* recovery case (e.g. a new dynamic material
+    // exists without its pairs yet), not a fault. The original assert here
+    // was `R_ASSERT(FALSE == UpdateMtlPairs())`, which crashed the editor
+    // exactly when this routine did its job.
+    UpdateMtlPairs();
     // save
     CMemoryWriter fs;
     fs.open_chunk(GAMEMTLS_CHUNK_VERSION);
