@@ -17,11 +17,56 @@ static void VisitSelectedItems(UITreeItem* parent, Fn&& fn)
     }
 }
 
+void UIObjectList::CollectSelectedForGoto(UITreeItem* parent, xr_vector<UIObjectListItem*>& out) const
+{
+    if (!parent)
+        return;
+    for (UITreeItem* Item: parent->Items)
+    {
+        UIObjectListItem* it = static_cast<UIObjectListItem*>(Item);
+        // Filter: mirror Draw's MatchesFilterRecursive gate. Folders that match
+        // only by descendant still pass — we still descend into them looking
+        // for the actual leaves.
+        if (m_Filter[0] && !UIObjectListItem::MatchesFilterRecursive(it))
+            continue;
+        // Visibility-mode filter mirrors UIObjectListItem::Draw's early-return:
+        // a mode-hidden folder takes its children off the rendered tree, so we
+        // also stop recursing here.
+        if (it->Object && !it->m_Wallmark)
+        {
+            if (m_Mode == M_Visible && !it->Object->Visible())
+                continue;
+            if (m_Mode == M_Inbvisible && it->Object->Visible())
+                continue;
+        }
+        if (it->m_Wallmark)
+        {
+            const bool hidden = !!it->m_Wallmark->flags.is(ESceneWallmarkTool::wallmark::flHidden);
+            if (m_Mode == M_Visible && hidden)
+                continue;
+            if (m_Mode == M_Inbvisible && !hidden)
+                continue;
+        }
+        bool sel = false;
+        if (it->Object && it->Object->Selected())
+            sel = true;
+        if (it->m_Wallmark && it->m_Wallmark->flags.is(ESceneWallmarkTool::wallmark::flSelected))
+            sel = true;
+        if (sel)
+            out.push_back(it);
+        CollectSelectedForGoto(it, out);
+    }
+}
+
 UIObjectList* UIObjectList::Form = nullptr;
 UIObjectList::UIObjectList(): m_Root("")
 {
-    m_Mode      = M_All;
-    m_Filter[0] = 0;
+    m_Mode                    = M_All;
+    m_Filter[0]               = 0;
+    m_LastSelected            = nullptr;
+    m_PendingScrollToSelected = false;
+    m_NextGotoIndex           = 0;
+    m_ScrollToItem            = nullptr;
 }
 
 UIObjectList::~UIObjectList() {}
@@ -613,6 +658,32 @@ void UIObjectList::DrawObjects()
     if (LTools->CurrentClassID() != m_cur_cls)
         Refresh();
 
+    // Resolve a pending "go to next selected" click. Builds the visible
+    // selection list (DFS, filter + mode honoured), advances the cycle
+    // index, force-expands the target's ancestor folders so the row
+    // actually draws this frame, and stashes the target pointer for
+    // UIObjectListItem::Draw to SetScrollHereY on.
+    if (m_PendingScrollToSelected)
+    {
+        m_PendingScrollToSelected = false;
+        xr_vector<UIObjectListItem*> selected;
+        CollectSelectedForGoto(&m_Root, selected);
+        if (!selected.empty())
+        {
+            if (m_NextGotoIndex < 0 || m_NextGotoIndex >= (int)selected.size())
+                m_NextGotoIndex = 0;
+            UIObjectListItem* target = selected[m_NextGotoIndex];
+            m_NextGotoIndex          = (m_NextGotoIndex + 1) % (int)selected.size();
+            for (UITreeItem* p = target->Owner; p && p != &m_Root; p = p->Owner)
+            {
+                UIObjectListItem* pi = static_cast<UIObjectListItem*>(p);
+                if (pi->Object && pi->Object->FClassID == OBJCLASS_FOLDER)
+                    ((CFolderObject*)pi->Object)->SetCollapsed(false);
+            }
+            m_ScrollToItem = target;
+        }
+    }
+
     static ImGuiTableFlags flags =
         ImGuiTableFlags_BordersV
         | ImGuiTableFlags_BordersOuterH
@@ -625,7 +696,44 @@ void UIObjectList::DrawObjects()
     {
         ImGui::TableSetupScrollFreeze(1, 1);
         ImGui::TableSetupColumn("Objects"_RU >> u8"Объекты", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableHeadersRow();
+        // Custom header row: column heading on the left + a small target-icon
+        // button overlaid on the right of the same cell. Replaces the default
+        // TableHeadersRow() so we can co-locate the "go to next selected" action
+        // with the "Objects" label without growing the panel by a toolbar row.
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TableHeader("Objects"_RU >> u8"Объекты");
+        {
+            // Overlay region: right-edge of the header cell, slightly inset so
+            // the icon doesn't touch the column-border line.
+            ImVec2 hmin     = ImGui::GetItemRectMin();
+            ImVec2 hmax     = ImGui::GetItemRectMax();
+            float  h        = hmax.y - hmin.y;
+            float  btn_size = h - 2.0f;
+            if (btn_size < 8.0f)
+                btn_size = 8.0f;
+            ImGui::SetCursorScreenPos(ImVec2(hmax.x - btn_size - 2.0f, hmin.y + 1.0f));
+            ImVec2 cp = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##goto_selected_btn", ImVec2(btn_size, btn_size));
+            const bool  hovered = ImGui::IsItemHovered();
+            const bool  clicked = ImGui::IsItemClicked();
+            ImDrawList* dl      = ImGui::GetWindowDrawList();
+            ImVec2      center(cp.x + btn_size * 0.5f, cp.y + btn_size * 0.5f);
+            // Hand-drawn bullseye target so the icon works without depending on
+            // dingbat / geometric-symbol glyphs (the editor's font atlas covers
+            // Basic Latin + Cyrillic only — no ◎ glyph available).
+            ImU32 col = ImGui::GetColorU32(hovered ? ImGuiCol_HeaderHovered : ImGuiCol_Text);
+            dl->AddCircle(center, btn_size * 0.40f, col, 20, 1.5f);
+            dl->AddCircle(center, btn_size * 0.22f, col, 16, 1.5f);
+            dl->AddCircleFilled(center, btn_size * 0.08f, col, 8);
+            if (hovered)
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::SetTooltip("Jump to next selected"_RU >> u8"Перейти к следующему выделенному");
+            }
+            if (clicked)
+                m_PendingScrollToSelected = true;
+        }
         m_Root.DrawRoot();
 
         // Unparent drop zone — a final wide row at the bottom that accepts drops to

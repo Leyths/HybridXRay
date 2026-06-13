@@ -36,6 +36,12 @@ private:
 private:
     void DrawObjects();
     void DrawObject(CCustomObject* obj, const char* name);
+    // Walks every list row depth-first and accumulates the ones that
+    // (a) pass the active filter + visibility mode and (b) are selected.
+    // Used by the "go to next selected" target button — index into the
+    // returned vector cycles to give the user N presses to walk all
+    // selected items in list order.
+    void CollectSelectedForGoto(UITreeItem* parent, xr_vector<UIObjectListItem*>& out) const;
 
 private:
     ObjClassID m_cur_cls;
@@ -49,4 +55,13 @@ private:
     string_path       m_Filter;
     UIObjectListItem  m_Root;
     UIObjectListItem* m_LastSelected;
+    // "Go to next selected" state. m_PendingScrollToSelected is set by the
+    // target button and cleared the same frame in DrawObjects. m_NextGotoIndex
+    // cycles through the selected-item list so repeated clicks walk through
+    // every selection before wrapping. m_ScrollToItem is the row picked this
+    // frame — UIObjectListItem::Draw calls SetScrollHereY when it draws it
+    // and clears the pointer.
+    bool              m_PendingScrollToSelected;
+    int               m_NextGotoIndex;
+    UIObjectListItem* m_ScrollToItem;
 };

@@ -116,6 +116,15 @@ void UIObjectListItem::Draw()
     if (dim_hidden)
         ImGui::PopStyleVar();
 
+    // "Go to next selected" landing: DrawObjects picked this item this frame.
+    // Scroll the parent table so the row centres in view, then clear the
+    // pointer so subsequent items don't try to claim the scroll.
+    if (UIObjectList::Form && UIObjectList::Form->m_ScrollToItem == this)
+    {
+        ImGui::SetScrollHereY(0.5f);
+        UIObjectList::Form->m_ScrollToItem = nullptr;
+    }
+
     // Persist collapse state for folders. A click on the expand/collapse arrow
     // fires both IsItemToggledOpen() *and* IsItemClicked() on the same frame —
     // we capture the toggle flag here and use it to suppress the selection
@@ -350,6 +359,14 @@ void UIObjectListItem::DrawWallmarkRow()
 
     if (hidden)
         ImGui::PopStyleVar();
+
+    // "Go to next selected" landing — wallmark variant. See the matching
+    // hook in UIObjectListItem::Draw for the same logic.
+    if (UIObjectList::Form && UIObjectList::Form->m_ScrollToItem == this)
+    {
+        ImGui::SetScrollHereY(0.5f);
+        UIObjectList::Form->m_ScrollToItem = nullptr;
+    }
 
     if (ImGui::IsItemClicked())
     {
