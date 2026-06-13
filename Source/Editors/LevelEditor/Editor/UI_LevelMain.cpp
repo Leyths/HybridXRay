@@ -4,6 +4,8 @@
 #include "../xrengine/GameFont.h"
 #include "UI/UIEditLibrary.h"
 #include "../resources/resource.h"
+#include "../../xrECore/Editor/TexturePrefetcher.h"
+#include "../../xrECore/Editor/MeshPrefetcher.h"
 
 #ifdef _LEVEL_EDITOR
 //.    if (m_Cursor->GetVisible()) RedrawScene();
@@ -232,6 +234,93 @@ CCommandVar CommandLoad(CCommandVar p1, CCommandVar p2)
 
             if (res)
             {
+                // Enqueue every scene-object's meshes for the background mesh
+                // prefetcher. The worker generates vertex blobs off-thread,
+                // the main loop's Drain uploads them to the GPU a few ms per
+                // frame, and CEditableMesh::Render skips meshes whose buffers
+                // aren't ready yet (they pop in once uploaded). Trade: scene-
+                // open is fast; the first ~1-2s of editing shows some pop-in
+                // for un-uploaded meshes. See Editor/MeshPrefetcher.h.
+                //
+                // Texture prefetcher likewise drains in the background — no
+                // FlushAll blocking the level-open progress UI anymore. The
+                // CTexture::apply_load fallback path catches any not-yet-
+                // drained texture with a tiny sync read.
+                if (g_MeshPrefetch)
+                {
+                    // Collect scene objects with their distance to the camera
+                    // so we can warm what the user is *looking at* first. Without
+                    // this, mesh upload order is iteration order over tools +
+                    // m_Objects, which has no relation to viewport — the user
+                    // frequently sees nearby geometry pop in last.
+                    struct Item
+                    {
+                        CSceneObject* so;
+                        float         distSQ;
+                    };
+                    xr_vector<Item> ordered;
+                    ordered.reserve(2048);
+                    const Fvector& cam = EDevice->vCameraPosition;
+                    // Closest-point-of-bbox to camera. Sorting by pivot misses
+                    // the case where a big object (truck, building) has its
+                    // pivot far from the camera but its body wraps right
+                    // around it — the pivot distance ranks the object low so
+                    // it loads late even though it dominates the view.
+                    auto box_distSQ = [](const Fbox& bb, const Fvector& p) -> float {
+                        Fvector q;
+                        q.x = (p.x < bb.x1) ? bb.x1 : (p.x > bb.x2 ? bb.x2 : p.x);
+                        q.y = (p.y < bb.y1) ? bb.y1 : (p.y > bb.y2 ? bb.y2 : p.y);
+                        q.z = (p.z < bb.z1) ? bb.z1 : (p.z > bb.z2 ? bb.z2 : p.z);
+                        return q.distance_to_sqr(p);
+                    };
+                    for (SceneToolsMapPairIt t_it = Scene->FirstTool(); t_it != Scene->LastTool(); ++t_it)
+                    {
+                        ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(t_it->second);
+                        if (!ot)
+                            continue;
+                        ObjectList& lst = ot->GetObjects();
+                        for (CCustomObject* Obj: lst)
+                        {
+                            if (Obj->FClassID != OBJCLASS_SCENEOBJECT)
+                                continue;
+                            CSceneObject* so = (CSceneObject*)Obj;
+                            if (!so->Meshes())
+                                continue;
+                            Item it;
+                            it.so = so;
+                            Fbox bb;
+                            if (so->GetBox(bb))
+                                it.distSQ = box_distSQ(bb, cam);
+                            else
+                                it.distSQ = cam.distance_to_sqr(so->FPosition);
+                            ordered.push_back(it);
+                        }
+                    }
+                    std::sort(ordered.begin(), ordered.end(), [](const Item& a, const Item& b) {
+                        return a.distSQ < b.distSQ;
+                    });
+                    // CSceneObjects with the same reference share the same
+                    // CEditableMesh pointers. Without dedup we enqueue each
+                    // shared mesh once per instance — the example level had
+                    // 23k enqueues for ~4k unique meshes (a 5x waste). Worker
+                    // discards duplicates correctly via the HasRenderBuffers
+                    // check, but it still costs lock + alloc per dup.
+                    xr_set<CEditableMesh*> seen;
+                    int                    n_meshes = 0;
+                    for (const Item& it: ordered)
+                    {
+                        EditMeshVec* meshes = it.so->Meshes();
+                        for (CEditableMesh* m: *meshes)
+                        {
+                            if (!seen.insert(m).second)
+                                continue;
+                            g_MeshPrefetch->Enqueue(m);
+                            ++n_meshes;
+                        }
+                    }
+                    (void)n_meshes;
+                }
+
                 UI->ResetStatus();
                 Scene->UndoClear();
 

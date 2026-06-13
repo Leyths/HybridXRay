@@ -105,6 +105,12 @@ public:
     void         _ParseList(sh_list& dest, LPCSTR names);
     IBlender*    _GetBlender(LPCSTR Name);
     IBlender*    _FindBlender(LPCSTR Name);
+    // Lookup-only accessor for the texture cache. Returns the live CTexture if
+    // one was already created via _CreateTexture, NULL otherwise. Side-effect
+    // free — does not create. Used by the background texture prefetcher to
+    // apply pre-loaded bytes to an existing texture without risking spurious
+    // creation if the texture was destroyed since enqueue.
+    CTexture*    _FindTexture(LPCSTR Name);
     void         _GetMemoryUsage(u32& m_base, u32& c_base, u32& m_lmaps, u32& c_lmaps);
     void         _DumpMemoryUsage();
     //.	BOOL							_GetDetailTexture	(LPCSTR Name, LPCSTR& T, R_constant_setup* &M);

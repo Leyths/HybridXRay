@@ -10,6 +10,8 @@
 #include "ResourceManager.h"
 #include "UI_ToolsCustom.h"
 #include "igame_persistent.h" // for environment bug-fix
+#include "TexturePrefetcher.h"
+#include "MeshPrefetcher.h"
 
 CEditorRenderDevice* EDevice;
 
@@ -281,6 +283,18 @@ void CEditorRenderDevice::_Create(IReader* F)
 {
     b_is_Ready = TRUE;
 
+    // Background prefetchers must be alive before *any* CTexture or
+    // CEditableMesh is created during init — the _CreateTexture enqueue hook
+    // and the level-load mesh enumeration both no-op when these pointers
+    // are null. If we create them later, the font and shader textures spun
+    // up below would not be enqueued, the texture drain would never visit
+    // them, and apply_load would have to sync-load them on first bind. See
+    // Editor/TexturePrefetcher.h and Editor/MeshPrefetcher.h.
+    if (!g_TexPrefetch)
+        g_TexPrefetch = xr_new<CTexturePrefetcher>();
+    if (!g_MeshPrefetch)
+        g_MeshPrefetch = xr_new<CMeshPrefetcher>();
+
     // General Render States
     _SetupStates();
 
@@ -301,6 +315,21 @@ void CEditorRenderDevice::_Create(IReader* F)
 
 void CEditorRenderDevice::_Destroy(BOOL bKeepTextures)
 {
+    // Stop the prefetcher before tearing down resources. The worker only
+    // touches FS + heap, but its in-flight bytes target CTexture instances
+    // that are about to be released; joining now keeps the queues
+    // self-consistent across re-create cycles.
+    if (g_TexPrefetch)
+    {
+        xr_delete(g_TexPrefetch);
+        g_TexPrefetch = nullptr;
+    }
+    if (g_MeshPrefetch)
+    {
+        xr_delete(g_MeshPrefetch);
+        g_MeshPrefetch = nullptr;
+    }
+
     xr_delete(pSystemFont);
 
     b_is_Ready      = FALSE;
@@ -452,6 +481,17 @@ void CEditorRenderDevice::FrameMove()
     {
         m_Camera.Update(fTimeDelta);
     }
+
+    // Drain prefetched textures with a strict time budget. Each GPU upload
+    // is 1-5 ms; a count-only cap can blow the frame budget when a burst
+    // arrives. 4 ms keeps the editor at 100+ fps even mid-drain.
+    if (g_TexPrefetch)
+        g_TexPrefetch->Drain(64, 4);
+    // Drain prefetched mesh GPU buffers. Same time-bound philosophy. Each
+    // upload is just CreateVertexBuffer + Lock + memcpy + Unlock — the
+    // expensive prep was done on the worker.
+    if (g_MeshPrefetch)
+        g_MeshPrefetch->Drain(64, 6);
 
     // process objects
     seqFrame.Process(rp_Frame);

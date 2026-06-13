@@ -522,8 +522,9 @@ Load:
 //
 // Pulled out of texture_load so the editor's background texture prefetcher
 // can apply the exact same resolution rules from a worker thread without
-// duplicating the cascade.
-static bool resolve_dds_path(LPCSTR fRName, string_path& out_path)
+// duplicating the cascade. External linkage so TexturePrefetcher.cpp can
+// extern-declare it; no header — only one other TU references it.
+bool resolve_dds_path(LPCSTR fRName, string_path& out_path)
 {
     string_path fname;
     xr_strcpy(fname, fRName);
@@ -822,3 +823,59 @@ _BUMP_from_base:
     return T_normal_1C;
 }
 }
+
+#ifdef REDITOR
+// Companion to texture_load that takes pre-loaded DDS bytes instead of opening
+// the file itself. Used by the editor's background texture prefetcher: the
+// worker thread reads the DDS into a heap buffer; the main thread calls this
+// to do the GPU upload (D3D9 isn't thread-safe enough to risk creating textures
+// off the render thread).
+//
+// Only handles the simple cube + 2D DDS cases. Bump-from-base synthesis and
+// special formats (theora/avi/seq) stay on the file-based texture_load path —
+// the prefetcher filters them out before queueing.
+//
+// Editor-only: the in-game render driver has a different CRender class
+// hierarchy with no need for prefetched bytes (in-game loads textures during
+// level load, not lazily during render).
+ID3DBaseTexture* CRender::texture_load_from_blob(LPCSTR fRName, const void* bytes, u32 size, u32& ret_msize)
+{
+    R_ASSERT(fRName && fRName[0]);
+    R_ASSERT(bytes && size);
+
+    D3DXIMAGE_INFO IMG;
+    HRESULT        result = D3DXGetImageInfoFromFileInMemory(bytes, (UINT)size, &IMG);
+    if (FAILED(result))
+        return nullptr;   // bytes are not a valid DDS — caller will retry via sync path
+
+    string_path fn;
+    xr_strcpy(fn, fRName);
+    fix_texture_name(fn);
+    strlwr(fn);
+
+    if (IMG.ResourceType == D3DRTYPE_CUBETEXTURE)
+    {
+        IDirect3DCubeTexture9* pTextureCUBE = nullptr;
+        result                              = D3DXCreateCubeTextureFromFileInMemoryEx(HW.pDevice, bytes, (UINT)size, D3DX_DEFAULT, IMG.MipLevels, 0, IMG.Format, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, &IMG, 0, &pTextureCUBE);
+        if (FAILED(result))
+            return nullptr;
+        const u32 mip_cnt = pTextureCUBE->GetLevelCount();
+        ret_msize         = calc_texture_size(0, mip_cnt, size);
+        return pTextureCUBE;
+    }
+
+    // 2D — mirror the _DDS_2D path: stage into SYSMEM first, then transfer
+    // to MANAGED via TW_LoadTextureFromTexture which applies the LOD bias.
+    ID3DTexture2D* T_sysmem = nullptr;
+    result                  = D3DXCreateTextureFromFileInMemoryEx(HW.pDevice, bytes, (UINT)size, D3DX_DEFAULT, D3DX_DEFAULT, IMG.MipLevels, 0, IMG.Format, D3DPOOL_SYSTEMMEM, D3DX_DEFAULT, D3DX_DEFAULT, 0, &IMG, 0, &T_sysmem);
+    if (FAILED(result))
+        return nullptr;
+    const int      img_loaded_lod = get_texture_load_lod(fn);
+    u32            dwWidth = 0, dwHeight = 0;
+    ID3DTexture2D* pTexture2D = TW_LoadTextureFromTexture(T_sysmem, IMG.Format, img_loaded_lod, dwWidth, dwHeight);
+    const u32      mip_cnt    = pTexture2D->GetLevelCount();
+    _RELEASE(T_sysmem);
+    ret_msize = calc_texture_size(img_loaded_lod, mip_cnt, size);
+    return pTexture2D;
+}
+#endif // REDITOR

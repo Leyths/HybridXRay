@@ -126,6 +126,8 @@
     <ClCompile Include="Editor\EThumbnailObject.cpp" />
     <ClCompile Include="Editor\EThumbnailSound.cpp" />
     <ClCompile Include="Editor\EThumbnailTexture.cpp" />
+    <ClCompile Include="Editor\TexturePrefetcher.cpp" />
+    <ClCompile Include="Editor\MeshPrefetcher.cpp" />
     <ClCompile Include="Editor\ExportObjectOGF.cpp" />
     <ClCompile Include="Editor\ExportObjectOGFCalculateTB.cpp" />
     <ClCompile Include="Editor\ExportSkeleton.cpp" />
@@ -261,6 +263,8 @@
     <ClInclude Include="Editor\PhysicsShellHolderEditorBase.h" />
     <ClInclude Include="Editor\pick_defs.h" />
     <ClInclude Include="Editor\render.h" />
+    <ClInclude Include="Editor\TexturePrefetcher.h" />
+    <ClInclude Include="Editor\MeshPrefetcher.h" />
     <ClInclude Include="Editor\SkeletonFace.h" />
     <ClInclude Include="Editor\SkeletonVert.h" />
     <ClInclude Include="Editor\UIMoveToForm.h" />

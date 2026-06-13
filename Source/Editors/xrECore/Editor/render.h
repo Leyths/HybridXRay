@@ -141,6 +141,12 @@ public:
 
     virtual IDirect3DBaseTexture9* texture_load(LPCSTR fname, u32& mem_size);
     virtual IDirect3DBaseTexture9* texture_load_software(LPCSTR fname, u32& mem_size);
+    // Same as texture_load, but uses caller-provided DDS bytes (already on
+    // the heap, typically from the background prefetcher) instead of doing
+    // the FS.r_open here. Handles cube + 2D DDS only — bump synthesis and
+    // special formats (theora/avi/seq) stay on the file-based path and the
+    // prefetcher filters them out before queueing.
+    virtual IDirect3DBaseTexture9* texture_load_from_blob(LPCSTR fname_for_log, const void* bytes, u32 size, u32& mem_size);
     virtual HRESULT                shader_compile(LPCSTR name, LPCSTR pSrcData, UINT SrcDataLen, void* pDefines, void* pInclude, LPCSTR pFunctionName, LPCSTR pTarget, DWORD Flags, void* ppShader, void* ppErrorMsgs, void* ppConstantTable);
 
     virtual DWORD                  get_dx_level();

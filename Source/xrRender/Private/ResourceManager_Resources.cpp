@@ -12,6 +12,9 @@
 #include "tss.h"
 #include "blenders\blender.h"
 #include "blenders\blender_recorder.h"
+#ifdef REDITOR
+#include "../../Editors/xrECore/Editor/TexturePrefetcher.h"
+#endif
 
 void fix_texture_name(LPSTR fn);
 
@@ -513,6 +516,14 @@ CTexture* CResourceManager::_CreateTexture(LPCSTR _Name)
         T->Preload();
         if (Device->b_is_Ready && !bDeferredLoad)
             T->Load();
+#ifdef REDITOR
+        // Editor-only background prefetch. The existing apply_load lazy path
+        // stays as the fallback; the prefetcher just races ahead and warms
+        // the texture in memory so the first bind isn't a synchronous stall.
+        // See Editor/TexturePrefetcher.h for design notes.
+        if (g_TexPrefetch)
+            g_TexPrefetch->Enqueue(Name);
+#endif
         return T;
     }
 }

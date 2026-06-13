@@ -348,6 +348,43 @@ class ECORE_API CEditableMesh
 
 public:
     static BOOL m_bDraftMeshMode;
+
+    // Background prefetch support. Splits the lazy-load body of Render() into
+    // a worker-safe CPU half (vertex normal gen + per-surface vertex blob
+    // assembly into heap buffers) and a main-thread D3D9 half (CreateVertex-
+    // Buffer + Lock + memcpy + Unlock). Without this split, the synchronous
+    // GenerateRenderBuffers in CEditableMesh::Render produced the dominant
+    // pan hitches at scene-open. See Editor/MeshPrefetcher.h.
+    struct PreparedSurface
+    {
+        CSurface* surf;
+        void*     bytes;
+        u32       size;
+        u32       num_vertex;
+    };
+    struct PreparedBuffers
+    {
+        xr_vector<PreparedSurface> surfaces;
+        ~PreparedBuffers()
+        {
+            for (PreparedSurface& ps: surfaces)
+                if (ps.bytes)
+                    xr_free(ps.bytes);
+        }
+    };
+
+    // Worker-thread-safe (touches only mesh state, no D3D). Returns false if
+    // the mesh's buffers already exist or the data isn't valid.
+    bool PrepareCpuRenderBuffers(PreparedBuffers& out);
+    // Main-thread only. Consumes the worker's output and creates D3D9 vertex
+    // buffers. After this returns, HasRenderBuffers() is true.
+    void UploadPreparedBuffers(PreparedBuffers& in);
+    // Cheap render-path check.
+    bool HasRenderBuffers() const
+    {
+        return m_RenderBuffers != nullptr;
+    }
+
     void        GenerateFNormals();
     void        GenerateVNormals(bool force = false, bool silent = false, bool only_one_msg = false);
     void        GenerateSVertices(u32 influence);

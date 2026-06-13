@@ -15,88 +15,87 @@
 #define F_LIM (10000)
 #define V_LIM (F_LIM * 3)
 //----------------------------------------------------
-void CEditableMesh::GenerateRenderBuffers()
+// Worker-thread-safe CPU half of GenerateRenderBuffers. Iterates surfaces,
+// allocates per-surface heap blobs, fills them via FillRenderBuffer. Touches
+// only mesh CPU state — no D3D calls — so this can run on the mesh prefetcher
+// worker without main-thread interleaving.
+bool CEditableMesh::PrepareCpuRenderBuffers(PreparedBuffers& out)
 {
-    //    CTimer T;
-    //    T.Start();
-    /*
-        CMemoryWriter 	F;
-        m_Parent->PrepareOGF(F,false,this);
-        IReader R		(F.pointer(), F.size());
-        m_Visual 		= ::Render->Models->Create(GetName(),&R);
-    //    Log				("Time: ",T.GetElapsed_sec());
-    //	string_path fn;
-    //	strconcat		(fn,"_alexmx_\\",GetName(),".ogf");
-    //	FS.update_path	(fn,_import_,fn);
-    //	F.save_to		(fn);
-        return;
-    */
     if (m_RenderBuffers)
-        return;
-    m_RenderBuffers = xr_new<RBMap>();
+        return false;
 
     GenerateVNormals(true);
-
-    VERIFY(m_VertexNormals);
+    if (!m_VertexNormals)
+        return false;
 
     for (SurfFacesPairIt sp_it = m_SurfFaces.begin(); sp_it != m_SurfFaces.end(); sp_it++)
     {
         IntVec&   face_lst  = sp_it->second;
         CSurface* _S        = sp_it->first;
-        int       num_verts = face_lst.size() * 3;
-        RBVector  rb_vec;
-        int       v_cnt      = num_verts;
-        int       start_face = 0;
-        int       num_face;
-        VERIFY3(v_cnt, "Empty surface arrive.", _S->_Name());
-#if 0
-        do{
-	        rb_vec.push_back	(st_RenderBuffer(0,(v_cnt<V_LIM)?v_cnt:V_LIM));
-            st_RenderBuffer& rb	= rb_vec.back();
-            if (_S->m_Flags.is(CSurface::sf2Sided)) 	rb.dwNumVertex *= 2;
-            num_face			= (v_cnt<V_LIM)?v_cnt/3:F_LIM;
+        const int num_verts = (int)face_lst.size() * 3;
+        if (num_verts <= 0)
+            continue;
 
-            int buf_size		= D3DXGetFVFVertexSize(_S->_FVF())*rb.dwNumVertex;
-            R_ASSERT2			(buf_size,"Empty buffer size or bad FVF.");
-			u8*	bytes			= 0;
-			IDirect3DVertexBuffer9*	pVB=0;
-//			IDirect3DIndexBuffer9*	pIB=0;
-			R_CHK(HW.pDevice->CreateVertexBuffer(buf_size, D3DUSAGE_WRITEONLY, 0, D3DPOOL_MANAGED, &pVB, 0));
-//            R_CHK(HW.pDevice->CreateIndexBuffer(i_cnt*sizeof(u16),D3DUSAGE_WRITEONLY,D3DFMT_INDEX16,D3DPOOL_MANAGED,&pIB,NULL));
-			rb.pGeom.create		(_S->_FVF(),pVB,0);
+        u32 num_vertex = (u32)num_verts;
+        if (_S->m_Flags.is(CSurface::sf2Sided))
+            num_vertex *= 2;
+        const int num_face = num_verts / 3;
+        const u32 buf_size = D3DXGetFVFVertexSize(_S->_FVF()) * num_vertex;
+        if (!buf_size)
+            continue;
 
-			R_CHK				(pVB->Lock(0,0,(LPVOID*)&bytes,0));
-			FillRenderBuffer	(face_lst,start_face,num_face,_S,bytes);
-			pVB->Unlock			();
+        u8*    bytes    = (u8*)xr_malloc(buf_size);
+        LPBYTE data_ptr = bytes;
+        FillRenderBuffer(face_lst, 0, num_face, _S, data_ptr);
 
-            v_cnt				-= V_LIM;
-            start_face			+= (_S->m_Flags.is(CSurface::sf2Sided))?rb.dwNumVertex/6:rb.dwNumVertex/3;
-        }while(v_cnt>0);
-#else
-        {
-            rb_vec.push_back(st_RenderBuffer(0, v_cnt));
-            st_RenderBuffer& rb = rb_vec.back();
-            if (_S->m_Flags.is(CSurface::sf2Sided))
-                rb.dwNumVertex *= 2;
-            num_face     = v_cnt / 3;
-
-            int buf_size = D3DXGetFVFVertexSize(_S->_FVF()) * rb.dwNumVertex;
-            R_ASSERT2(buf_size, "Empty buffer size or bad FVF.");
-            u8*                     bytes = 0;
-            IDirect3DVertexBuffer9* pVB   = 0;
-            R_CHK(HW.pDevice->CreateVertexBuffer(buf_size, D3DUSAGE_WRITEONLY, 0, D3DPOOL_MANAGED, &pVB, 0));
-            rb.pGeom.create(_S->_FVF(), pVB, 0);
-            R_CHK(pVB->Lock(0, 0, (LPVOID*)&bytes, 0));
-            FillRenderBuffer(face_lst, start_face, num_face, _S, bytes);
-            pVB->Unlock();
-
-            start_face += (_S->m_Flags.is(CSurface::sf2Sided)) ? rb.dwNumVertex / 6 : rb.dwNumVertex / 3;
-        }
-#endif
-        if (num_verts > 0)
-            m_RenderBuffers->insert(mk_pair(_S, rb_vec));
+        PreparedSurface ps;
+        ps.surf       = _S;
+        ps.bytes      = bytes;
+        ps.size       = buf_size;
+        ps.num_vertex = num_vertex;
+        out.surfaces.push_back(ps);
     }
     UnloadVNormals();
+    return !out.surfaces.empty();
+}
+
+// Main-thread D3D9 half. Takes the worker's CPU buffers and uploads to GPU.
+void CEditableMesh::UploadPreparedBuffers(PreparedBuffers& in)
+{
+    if (m_RenderBuffers)
+        return;   // someone else uploaded first; drop the prepared bytes
+    m_RenderBuffers = xr_new<RBMap>();
+    for (PreparedSurface& ps: in.surfaces)
+    {
+        RBVector rb_vec;
+        rb_vec.push_back(st_RenderBuffer(0, ps.num_vertex));
+        st_RenderBuffer&        rb  = rb_vec.back();
+
+        IDirect3DVertexBuffer9* pVB = 0;
+        R_CHK(HW.pDevice->CreateVertexBuffer(ps.size, D3DUSAGE_WRITEONLY, 0, D3DPOOL_MANAGED, &pVB, 0));
+        rb.pGeom.create(ps.surf->_FVF(), pVB, 0);
+
+        u8* dst = 0;
+        R_CHK(pVB->Lock(0, 0, (LPVOID*)&dst, 0));
+        memcpy(dst, ps.bytes, ps.size);
+        pVB->Unlock();
+
+        m_RenderBuffers->insert(mk_pair(ps.surf, rb_vec));
+    }
+    // PreparedBuffers' destructor frees `bytes` for each surface.
+}
+
+void CEditableMesh::GenerateRenderBuffers()
+{
+    // Compatibility entry point used by any remaining synchronous code paths
+    // (mesh-edit tools that mutate geometry and need an immediate refresh).
+    // Routes through the same prep/upload split as the background prefetcher
+    // so the actual GPU code lives in one place.
+    if (m_RenderBuffers)
+        return;
+    PreparedBuffers tmp;
+    if (PrepareCpuRenderBuffers(tmp))
+        UploadPreparedBuffers(tmp);
 }
 //----------------------------------------------------
 
@@ -221,8 +220,12 @@ void CEditableMesh::FillRenderBuffer(IntVec& face_lst, int start_face, int num_f
 //----------------------------------------------------
 void CEditableMesh::Render(const Fmatrix& parent, CSurface* S)
 {
+    // Skip the draw when buffers aren't ready yet — the background mesh
+    // prefetcher will hand them in on a later frame. The mesh "pops in".
+    // We deliberately don't lazy-load here anymore: the synchronous path
+    // is the entire source of the camera-pan hitches we've been chasing.
     if (0 == m_RenderBuffers)
-        GenerateRenderBuffers();
+        return;
     // visibility test
     if (!m_Flags.is(flVisible))
         return;

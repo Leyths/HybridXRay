@@ -134,6 +134,12 @@
     <ClCompile Include="Editor\EThumbnailTexture.cpp">
       <Filter>Editor</Filter>
     </ClCompile>
+    <ClCompile Include="Editor\TexturePrefetcher.cpp">
+      <Filter>Editor</Filter>
+    </ClCompile>
+    <ClCompile Include="Editor\MeshPrefetcher.cpp">
+      <Filter>Editor</Filter>
+    </ClCompile>
     <ClCompile Include="Editor\EThumbnailSound.cpp">
       <Filter>Editor</Filter>
     </ClCompile>
@@ -644,6 +650,12 @@
       <Filter>Editor</Filter>
     </ClInclude>
     <ClInclude Include="Editor\render.h">
+      <Filter>Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="Editor\TexturePrefetcher.h">
+      <Filter>Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="Editor\MeshPrefetcher.h">
       <Filter>Editor</Filter>
     </ClInclude>
     <ClInclude Include="Editor\pick_defs.h">

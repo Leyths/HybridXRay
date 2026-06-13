@@ -78,6 +78,13 @@ void CTexture::PostLoad()
 
 void CTexture::apply_load(u32 dwStage)
 {
+    // Synchronous fallback. The background texture prefetcher catches the
+    // bulk of level textures (~1500 per level) and applies them during the
+    // Drain phase, so apply_load mostly hits the already-loaded fast path.
+    // The rare miss — typically a font/UI texture created during device
+    // init, before the prefetcher was alive, or a runtime-spawned particle
+    // texture — pays a ~5 ms sync read here. Acceptable; broken fonts (the
+    // alternative if we just bound null) are not.
     if (!flags.bLoaded)
         Load();
     else

@@ -85,6 +85,17 @@ IBlender* CResourceManager::_FindBlender(LPCSTR Name)
         return I->second;
 }
 
+CTexture* CResourceManager::_FindTexture(LPCSTR Name)
+{
+    if (!(Name && Name[0]))
+        return 0;
+    LPSTR         N = LPSTR(Name);
+    map_TextureIt I = m_textures.find(N);
+    if (I == m_textures.end())
+        return 0;
+    return I->second;
+}
+
 void CResourceManager::ED_UpdateBlender(LPCSTR Name, IBlender* data)
 {
     LPSTR                 N = LPSTR(Name);
