@@ -514,6 +514,33 @@ Load:
 }
 }
 #endif
+// Resolve a texture reference name to its on-disk .dds path. Returns TRUE
+// and fills `out_path` if a real file was found in any of the standard roots
+// ($level$, $game_saves$, $game_textures$). Returns FALSE if no file exists
+// — for names ending in "_bump" the caller treats FALSE as the synthetic
+// normal-map case.
+//
+// Pulled out of texture_load so the editor's background texture prefetcher
+// can apply the exact same resolution rules from a worker thread without
+// duplicating the cascade.
+static bool resolve_dds_path(LPCSTR fRName, string_path& out_path)
+{
+    string_path fname;
+    xr_strcpy(fname, fRName);
+    fix_texture_name(fname);
+    // Synthetic-bump guard: if the name ends "_bump" but no real DDS sits in
+    // $game_textures$, the caller must take the synthesis path instead.
+    if (!FS.exist(out_path, "$game_textures$", fname, ".dds") && strstr(fname, "_bump"))
+        return false;
+    if (FS.exist(out_path, "$level$", fname, ".dds"))
+        return true;
+    if (FS.exist(out_path, "$game_saves$", fname, ".dds"))
+        return true;
+    if (FS.exist(out_path, "$game_textures$", fname, ".dds"))
+        return true;
+    return false;
+}
+
 ID3DBaseTexture* CRender::texture_load(LPCSTR fRName, u32& ret_msize)
 {
     HRESULT                result;
@@ -534,15 +561,13 @@ ID3DBaseTexture* CRender::texture_load(LPCSTR fRName, u32& ret_msize)
     xr_strcpy(fname, fRName);   //. andy if (strext(fname)) *strext(fname)=0;
     fix_texture_name(fname);
     IReader* S = NULL;
-    // if (FS.exist(fn,"$game_textures$",fname,	".dds")	&& strstr(fname,"_bump"))	goto _BUMP;
-    if (!FS.exist(fn, "$game_textures$", fname, ".dds") && strstr(fname, "_bump"))
+    if (resolve_dds_path(fRName, fn))
+        goto _DDS;
+    // resolve_dds_path returns FALSE either because the file doesn't exist or
+    // because it's a synthetic _bump request — discriminate here so existing
+    // semantics are preserved exactly.
+    if (strstr(fname, "_bump"))
         goto _BUMP_from_base;
-    if (FS.exist(fn, "$level$", fname, ".dds"))
-        goto _DDS;
-    if (FS.exist(fn, "$game_saves$", fname, ".dds"))
-        goto _DDS;
-    if (FS.exist(fn, "$game_textures$", fname, ".dds"))
-        goto _DDS;
 
 #ifdef REDITOR
     ELog.Msg(mtError, "! Can't find texture '%s'", fname);
