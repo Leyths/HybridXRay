@@ -42,7 +42,6 @@ void UIMainForm::Draw()
     if (bDemoImGui)
         ImGui::ShowDemoWindow(&bDemoImGui);
     m_Render->Draw();
-    splash::hide();
 }
 
 bool UIMainForm::Frame()

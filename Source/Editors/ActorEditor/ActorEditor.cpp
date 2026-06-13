@@ -59,6 +59,11 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
     splash::update_progress(22);
 
     splash::update_progress(1);
+
+    // See LevelEditor wWinMain: hide here to avoid the splash hanging at 100%
+    // when the editor is launched without input focus.
+    splash::hide();
+
     while (MainForm->Frame())
     {}
 

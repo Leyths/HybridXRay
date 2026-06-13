@@ -170,8 +170,6 @@ void UIMainForm::Draw()
         ImGui::SetWindowFocus("Properties"_RU >> u8"Свойства");
         sFocusedPropertiesOnce = true;
     }
-
-    splash::hide();
 }
 
 bool UIMainForm::Frame()

@@ -113,8 +113,8 @@ namespace splash
         const HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC);
         RECT       logoRect;
         GetWindowRect(logoPicture, &logoRect);
-        const HWND prevWindow = topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
-        SetWindowPos(logoWindow, HWND_TOPMOST, 0, 0, logoRect.right - logoRect.left, logoRect.bottom - logoRect.top, SWP_NOMOVE | SWP_SHOWWINDOW);
+        const HWND zOrder = topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
+        SetWindowPos(logoWindow, zOrder, 0, 0, logoRect.right - logoRect.left, logoRect.bottom - logoRect.top, SWP_NOMOVE | SWP_SHOWWINDOW);
         UpdateWindow(logoWindow);
     }
 

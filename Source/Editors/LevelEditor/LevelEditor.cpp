@@ -78,6 +78,15 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
     splash::update_progress(25);
 
     splash::update_progress(1);
+
+    // Hide the splash now that loading is finished. Doing this here (rather
+    // than at the end of UIMainForm::Draw) avoids a deadlock when the editor
+    // launches without input focus: TUI::Idle skips RealRedrawScene while
+    // m_bAppActive is false, so Draw never runs and the splash hangs at 100%
+    // until the user clicks the window. Hiding inline guarantees forward
+    // progress regardless of activation state.
+    splash::hide();
+
     while (MainForm->Frame())
     {}
 
