@@ -416,7 +416,11 @@ void CCustomPreferences::AppendRecentFile(LPCSTR name)
         }
     }
     scene_recent_list.insert(scene_recent_list.begin(), name);
-    while (scene_recent_list.size() >= EPrefs->scene_recent_count)
+    // Cap at scene_recent_count entries. The original `>=` was an off-by-one:
+    // with count=10 only 9 entries survived, and with count=1 every Append
+    // wiped the list to empty (after which Save left the stale on-disk entry
+    // intact, so the menu froze on whatever was in the ini at first launch).
+    while (scene_recent_list.size() > EPrefs->scene_recent_count)
         scene_recent_list.pop_back();
 
     ExecCommand(COMMAND_REFRESH_UI_BAR);

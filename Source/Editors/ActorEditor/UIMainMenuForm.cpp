@@ -42,7 +42,9 @@ void UIMainMenuForm::Draw()
                 {
                     if (ImGui::MenuItem(str.c_str(), ""))
                     {
-                        ExecCommand(COMMAND_LOAD, str);
+                        // See LevelEditor UIMainMenuForm: wrap in xr_string so
+                        // CommandLoad sees a string payload, not an int.
+                        ExecCommand(COMMAND_LOAD, xr_string(str.c_str()));
                     }
                 }
                 ImGui::EndMenu();

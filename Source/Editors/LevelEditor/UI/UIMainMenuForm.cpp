@@ -55,7 +55,11 @@ void UIMainMenuForm::Draw()
                 {
                     if (ImGui::MenuItem(str.c_str(), ""))
                     {
-                        ExecCommand(COMMAND_LOAD, str);
+                        // CCommandVar's tpStr constructor takes xr_string; passing the
+                        // AStringVec element directly fell through to the int branch,
+                        // so CommandLoad opened the file dialog instead of loading the
+                        // selected entry.
+                        ExecCommand(COMMAND_LOAD, xr_string(str.c_str()));
                     }
                     if (ImGui::IsItemHovered())
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
