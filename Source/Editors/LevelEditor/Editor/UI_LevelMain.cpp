@@ -319,6 +319,33 @@ CCommandVar CommandLoad(CCommandVar p1, CCommandVar p2)
                         }
                     }
                     (void)n_meshes;
+
+                    // ELibrary::CreateEditObject's PrewarmRP already enqueued
+                    // every reference's textures during scene-load (in ref-
+                    // load order). Promote close-to-camera textures to the
+                    // front of the worker queue so the user's spawn-area view
+                    // drains first.
+                    //
+                    // Iterate FARTHEST→CLOSEST: EnqueuePriority push_fronts
+                    // each call, so the last item pushed ends up at the head
+                    // of the queue. Walking closest-first would invert
+                    // priority. The prefetcher dedups via m_enqueued —
+                    // EnqueuePriority on an already-queued name splices it to
+                    // front in O(n); on an already-loaded one it's a no-op.
+                    // No double disk reads.
+                    if (g_TexPrefetch)
+                    {
+                        xr_set<CEditableObject*> seen_refs;
+                        for (auto rit = ordered.rbegin(); rit != ordered.rend(); ++rit)
+                        {
+                            CEditableObject* ref = rit->so->GetReference();
+                            if (!ref || !seen_refs.insert(ref).second)
+                                continue;
+                            SurfaceVec& sf = ref->Surfaces();
+                            for (SurfaceIt s = sf.begin(); s != sf.end(); ++s)
+                                g_TexPrefetch->EnqueuePriority((*s)->_Texture());
+                        }
+                    }
                 }
 
                 UI->ResetStatus();

@@ -154,7 +154,13 @@ CEditableObject* ELibrary::CreateEditObject(LPCSTR nm)
     if (it != m_EditObjects.end())
         m_EditObject = it->second;
     else if (0 != (m_EditObject = LoadEditObject(name.c_str())))
+    {
         m_EditObjects[name] = m_EditObject;
+        // Prewarm — see CEditableObject::PrewarmRP. Forces the lazy first-
+        // render init so the editor's texture prefetcher gets DDS requests
+        // enqueued at scene-load time instead of at first-pan.
+        m_EditObject->PrewarmRP();
+    }
     if (m_EditObject)
         m_EditObject->m_RefCount++;
     return m_EditObject;

@@ -30,10 +30,12 @@ public:
     // pseudo-textures ($null, $user$...), since those stay on the existing
     // synchronous lazy-load path.
     void Enqueue(LPCSTR name);
-    // Same as Enqueue but pushes to the FRONT of the queue — used at scene-
-    // load to bump the textures of near-camera scene objects ahead of the
-    // bulk that was auto-enqueued in _CreateTexture order. Already-queued
-    // duplicates are accepted; drain dedups via flags.bLoaded.
+
+    // Like Enqueue but moves the entry to the front of the pending queue if
+    // it was already enqueued in some earlier (lower-priority) position. Used
+    // by UI_LevelMain's camera-distance walk to promote close-to-camera
+    // textures past the bulk that PrewarmRP enqueued in reference-load order.
+    // Main-thread only. Already-loaded textures are skipped (no work to do).
     void EnqueuePriority(LPCSTR name);
 
     // Pop ready entries and apply them to their CTexture, stopping when
@@ -63,6 +65,11 @@ private:
 
     xr_deque<shared_str>      m_pending;
     xr_vector<ReadyEntry>     m_ready;
+    // Names currently in pending OR ready (i.e. either waiting for the
+    // worker, or waiting for the main-thread Drain to finish). Lets Enqueue
+    // and EnqueuePriority dedup so the worker never reads the same DDS
+    // twice. Cleared per-name once Drain finishes that name's upload.
+    xr_set<shared_str>        m_enqueued;
     xrCriticalSection         m_lock;
     HANDLE                    m_sem;
     HANDLE                    m_worker;

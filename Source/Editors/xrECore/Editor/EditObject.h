@@ -338,6 +338,15 @@ protected:
     void DefferedLoadRP();
     void DefferedUnloadRP();
 
+public:
+    // Called once at library-load time from ELibrary::CreateEditObject. Forces
+    // the lazy first-render init (sets LS_RBUFFERS so teardown runs) and
+    // touches every surface's _Shader() so the editor's texture prefetcher
+    // gets DDS requests enqueued at scene-load time instead of at first-pan.
+    void PrewarmRP();
+
+protected:
+
     void OnChangeTransform(PropValue* prop);
     void OnChangeShader(PropValue* prop);
 

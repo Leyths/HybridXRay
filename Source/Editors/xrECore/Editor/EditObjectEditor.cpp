@@ -287,6 +287,23 @@ xr_string CEditableObject::GetLODTextureName()
 
 void CEditableObject::OnDeviceCreate() {}
 
+void CEditableObject::PrewarmRP()
+{
+    // Sets LS_RBUFFERS, creates LOD/skeleton geom — mirrors what
+    // CEditableObject::Render does on first frame. Required before
+    // touching surface shaders so the teardown path (ClearGeometry →
+    // OnDeviceDestroy → DefferedUnloadRP) destroys them.
+    DefferedLoadRP();
+
+    // Touch every surface's _Shader() to create the CSurface→shader→texture
+    // chain. The texture creation registers each texture with the editor's
+    // prefetcher (#ifdef REDITOR in CResourceManager::_CreateTexture). The
+    // DDS read itself runs on the prefetcher's worker thread.
+    for (SurfaceIt s = m_Surfaces.begin(); s != m_Surfaces.end(); ++s)
+        if ((*s)->IsVoid())
+            (*s)->_Shader();
+}
+
 void CEditableObject::OnDeviceDestroy()
 {
     DefferedUnloadRP();

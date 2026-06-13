@@ -24,28 +24,80 @@ CTexturePrefetcher::~CTexturePrefetcher()
         CloseHandle(m_sem);
 }
 
-void CTexturePrefetcher::Enqueue(LPCSTR name)
+// Shared filter for Enqueue/EnqueuePriority — returns true to skip enqueueing.
+// Catches:
+//  - empty/runtime/special-format names that don't live on disk
+//  - already-loaded textures (nothing to prefetch)
+// Does NOT check m_enqueued — caller does that under the lock.
+static bool tex_should_skip(LPCSTR name)
 {
     if (!name || !name[0])
-        return;
-    // Runtime pseudo-textures don't live on disk.
+        return true;
     if (name[0] == '$')
-        return;
-    // Special-format textures (Theora/AVI/animated sequence) have main-thread
-    // state machines and stay on the existing synchronous path.
+        return true;
     string_path probe;
     if (FS.exist(probe, "$game_textures$", name, ".ogm"))
-        return;
+        return true;
     if (FS.exist(probe, "$game_textures$", name, ".avi"))
-        return;
+        return true;
     if (FS.exist(probe, "$game_textures$", name, ".seq"))
+        return true;
+    CTexture* tex = EDevice->Resources->_FindTexture(name);
+    if (tex && tex->flags.bLoaded)
+        return true;
+    return false;
+}
+
+void CTexturePrefetcher::Enqueue(LPCSTR name)
+{
+    if (tex_should_skip(name))
         return;
 
+    shared_str s(name);
     {
         xrCriticalSection::raii lk(&m_lock);
-        m_pending.push_back(shared_str(name));
+        // Dedup — if it's already pending or in the ready queue, no work.
+        if (!m_enqueued.insert(s).second)
+            return;
+        m_pending.push_back(s);
     }
     ReleaseSemaphore(m_sem, 1, nullptr);
+}
+
+void CTexturePrefetcher::EnqueuePriority(LPCSTR name)
+{
+    if (tex_should_skip(name))
+        return;
+
+    shared_str s(name);
+    bool       signal_worker = false;
+    {
+        xrCriticalSection::raii lk(&m_lock);
+        if (m_enqueued.count(s))
+        {
+            // Already enqueued — find and splice to front so the worker
+            // gets to it next. If it's already in m_ready (worker finished
+            // it, just waiting on Drain), it's not in m_pending and the
+            // erase below is a no-op — that's fine, it'll be uploaded soon.
+            for (auto it = m_pending.begin(); it != m_pending.end(); ++it)
+            {
+                if (*it == s)
+                {
+                    m_pending.erase(it);
+                    m_pending.push_front(s);
+                    break;
+                }
+            }
+        }
+        else
+        {
+            m_enqueued.insert(s);
+            m_pending.push_front(s);
+            signal_worker = true;
+        }
+    }
+    if (signal_worker)
+        ReleaseSemaphore(m_sem, 1, nullptr);
 }
 
 void CTexturePrefetcher::WorkerLoop()
@@ -109,6 +161,10 @@ void CTexturePrefetcher::Drain(int max_count, int max_ms)
                 return;
             e = m_ready.back();
             m_ready.pop_back();
+            // This name is done — let future Enqueue calls for the same name
+            // succeed (they would correctly skip via the bLoaded check, but
+            // dropping it from the set keeps memory bounded across sessions).
+            m_enqueued.erase(e.name);
         }
 
         // The CTexture may have been destroyed between enqueue and drain
@@ -140,6 +196,7 @@ void CTexturePrefetcher::Clear()
     for (size_t i = 0; i < m_ready.size(); ++i)
         xr_free(m_ready[i].bytes);
     m_ready.clear();
+    m_enqueued.clear();
 }
 
 void CTexturePrefetcher::Shutdown()
