@@ -872,14 +872,12 @@ bool TUI::ApplyShortCut(DWORD Key, TShiftState Shift)
 {
     VERIFY(m_bReady);
 
-    // Walk navigation: ESC is the only way out, and it has to win against
-    // the etaSelect handler below (which would otherwise eat the key without
-    // exiting the mode).
-    if (EDevice->m_Camera.IsInWalkMode() && Key == VK_ESCAPE)
-    {
-        EDevice->m_Camera.ExitWalkMode();
+    // Walk navigation owns all input — keep shortcuts (Object visibility,
+    // tool switches, A-Z bindings) from firing while the user is navigating.
+    // ESC is handled by TUI::KeyDown; it isn't whitelisted into this path on
+    // the xrUIManager side anyway.
+    if (EDevice->m_Camera.IsInWalkMode())
         return true;
-    }
 
     if (ApplyGlobalShortCut(Key, Shift))
         return true;

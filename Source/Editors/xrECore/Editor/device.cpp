@@ -547,6 +547,19 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         break;
     }
+    // Walk navigation hides the OS cursor by intercepting WM_SETCURSOR. The
+    // engine and ImGui both manage visibility via SetCursor(NULL/arrow) on
+    // WM_SETCURSOR, NOT via the ShowCursor refcount, so calling ShowCursor()
+    // in the camera does nothing here. Catch WM_SETCURSOR for the client
+    // area, set cursor to NULL, and return TRUE so neither ImGui's handler
+    // nor the default proc re-shows it.
+    if (msg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT
+        && EDevice && EDevice->m_Camera.IsInWalkMode())
+    {
+        ::SetCursor(NULL);
+        return TRUE;
+    }
+
     if (UI && UI->WndProcHandler(hWnd, msg, wParam, lParam))
         return true;
 

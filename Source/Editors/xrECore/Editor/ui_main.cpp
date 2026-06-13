@@ -88,22 +88,67 @@ bool TUI::KeyDown(WORD Key, TShiftState Shift)
 {
     if (!m_bReady)
         return false;
+
+    // Walk mode is modal — only ESC/Enter exit, everything else is swallowed
+    // so it can't trigger shortcuts (Object visibility, etc.) while the user
+    // is navigating. ESC reverts to the pre-Enter viewpoint (Blender-style
+    // cancel); Enter commits the navigated-to position. WASD/QE/Shift/Alt
+    // are read in CUI_Camera::Update via DInput polling — those keys don't
+    // need to come through this event path.
+    if (EDevice->m_Camera.IsInWalkMode())
+    {
+        if (Key == VK_ESCAPE)
+        {
+            EDevice->m_Camera.ExitWalkMode(/*commit*/ false);
+            return true;
+        }
+        if (Key == VK_RETURN)
+        {
+            EDevice->m_Camera.ExitWalkMode(/*commit*/ true);
+            return true;
+        }
+        return true;
+    }
+
+    // The grave-accent / tilde key reports VK_OEM_3 (0xC0) on US layouts and
+    // VK_OEM_8 (0xDF) on UK ISO. Accept either as the walk-mode / console key.
+    const bool is_grave_key = (Key == 0xC0) || (Key == 0xDF);
+
     if (Console->bVisible)
     {
-        if (Key == 0xC0)
+        if (is_grave_key)
         {
             Console->Hide();
         }
         return true;
     }
 
-    if (Key == 0xC0)
+    if (is_grave_key)
     {
         // Shift+~ enters walk navigation (Blender-style). The plain ~ keeps
-        // opening the console. WantCaptureKeyboard guards the case where the
-        // user is holding Shift while typing in an ImGui text field — we
-        // don't want a stray ~ to yank them out of the field.
-        if ((Shift & ssShift) && !ImGui::GetIO().WantCaptureKeyboard)
+        // opening the console. The Shift parameter only updates on mouse
+        // events (see MousePress/Release/Move), so we also consult ImGui's
+        // live keyboard state and DirectInput as fallbacks. WantCaptureKeyboard
+        // guards the case where the user is holding Shift while typing in an
+        // ImGui text field — we don't want a stray ~ to yank them out.
+        // GetKeyState polls Win32's actual key state synchronously, which
+        // doesn't depend on ImGui's NewFrame having run or DInput's per-frame
+        // poll having ticked. The other sources are kept as a belt-and-braces
+        // fallback.
+        // GetKeyState polls Win32 synchronously; the others are kept as a
+        // belt-and-braces fallback. WantTextInput (not WantCaptureKeyboard)
+        // is the right gate — only true while an actual text input has
+        // focus. WantCaptureKeyboard is also true when the docking host
+        // simply owns ImGui keyboard focus, which would otherwise block
+        // every shortcut.
+        const bool shift_held = ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
+                             || (Shift & ssShift)
+                             || ImGui::GetIO().KeyShift
+                             || (pInput && (pInput->iGetAsyncKeyState(DIK_LSHIFT)
+                                         || pInput->iGetAsyncKeyState(DIK_RSHIFT)));
+        if (ImGui::GetIO().WantTextInput)
+            return false;
+        if (shift_held)
         {
             EDevice->m_Camera.EnterWalkMode();
             return true;
@@ -142,6 +187,16 @@ void TUI::MousePress(TShiftState Shift, int X, int Y)
         return;
     if (m_MouseCaptured)
         return;
+    // Walk mode: LMB commits the navigated-to position, RMB cancels back to
+    // the pre-Enter viewpoint. Match Blender's exit behaviour.
+    if (EDevice->m_Camera.IsInWalkMode())
+    {
+        if (Shift & ssLeft)
+            EDevice->m_Camera.ExitWalkMode(/*commit*/ true);
+        else if (Shift & ssRight)
+            EDevice->m_Camera.ExitWalkMode(/*commit*/ false);
+        return;
+    }
 
     bMouseInUse  = true;
 
@@ -182,6 +237,8 @@ void TUI::MousePress(TShiftState Shift, int X, int Y)
 void TUI::MouseRelease(TShiftState Shift, int X, int Y)
 {
     if (!m_bReady)
+        return;
+    if (EDevice->m_Camera.IsInWalkMode())
         return;
 
     m_ShiftState = Shift;
@@ -260,6 +317,18 @@ void TUI::IR_OnMouseMove(int x, int y)
     }
     // Out cursor pos
     OutUICursorPos();
+}
+//---------------------------------------------------------------------------
+
+void TUI::IR_OnMouseWheel(int direction)
+{
+    // DInput delivers wheel notches as +/- 120 per detent (see WHEEL_DELTA).
+    // Walk mode uses the wheel to set the base speed that Shift/Alt then
+    // scale, so the binding is exclusive — don't let it leak elsewhere.
+    if (EDevice->m_Camera.IsInWalkMode())
+    {
+        EDevice->m_Camera.BumpWalkSpeed(direction > 0 ? 1.1f : 1.0f / 1.1f);
+    }
 }
 //---------------------------------------------------------------------------
 

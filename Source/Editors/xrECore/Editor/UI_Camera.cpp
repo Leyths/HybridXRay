@@ -26,9 +26,9 @@ CUI_Camera::CUI_Camera()
     m_FlySpeed    = 5.f;
     m_FlyAltitude = 1.8f;
 
-    m_bMoving     = false;
-    m_WalkMode    = false;
-    m_WalkSpeed   = 5.f;
+    m_bMoving   = false;
+    m_WalkMode  = false;
+    m_WalkSpeed = 5.f;
 }
 
 CUI_Camera::~CUI_Camera() {}
@@ -189,15 +189,9 @@ void                 CUI_Camera::Update(float dt)
 {
     if (m_WalkMode)
     {
-        // Mouse wheel adjusts base speed in 10% steps (compounded per frame
-        // — typical wheel hardware fires a delta of ±1 per detent, so a
-        // single notch = ~10% change). Read here rather than via an
-        // IR_OnMouseWheel override because nothing in the editor consumes
-        // wheel events except ImGui, which leaves io.MouseWheel set when
-        // no window captures the scroll.
-        const float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f)
-            BumpWalkSpeed(wheel > 0.0f ? 1.1f : 1.0f / 1.1f);
+        // Wheel adjustment is routed through TUI::IR_OnMouseWheel (DInput
+        // delivers wheel notches via the input callback chain, not via
+        // ImGui's io.MouseWheel, which stays zero in this editor).
 
         // Per-frame poll, not event-driven, so holding multiple keys produces
         // smooth diagonal motion. iGetAsyncKeyState reads DInput state and
@@ -523,23 +517,34 @@ void CUI_Camera::EnterWalkMode()
     if (m_WalkMode)
         return;
     UI->IR_GetMousePosScreen(m_StartPos);
-    ShowCursor(FALSE);
+    // Snapshot pose so a cancel-exit can restore the user's viewpoint.
+    m_WalkSavedPosition = m_Position;
+    m_WalkSavedHPB      = m_HPB;
     m_WalkMode = true;
     // The existing freelook code keys off m_bMoving — keep it in sync so
     // Process() still receives mouse deltas through TUI::IR_OnMouseMove
     // even though no mouse button is down.
     m_bMoving  = true;
+    // Visibility is driven by the WM_SETCURSOR interceptor in device.cpp,
+    // which sees IsInWalkMode() and force-NULLs the cursor. Trigger an
+    // immediate hide for the current message processing too.
+    SetCursor(NULL);
     UI->RedrawScene();
 }
 
-void CUI_Camera::ExitWalkMode()
+void CUI_Camera::ExitWalkMode(bool commit)
 {
     if (!m_WalkMode)
         return;
     SetCursorPos(m_StartPos.x, m_StartPos.y);
-    ShowCursor(TRUE);
     m_WalkMode = false;
     m_bMoving  = false;
+    if (!commit)
+    {
+        m_Position = m_WalkSavedPosition;
+        m_HPB      = m_WalkSavedHPB;
+        BuildCamera();
+    }
     UI->RedrawScene();
 }
 

@@ -23,6 +23,10 @@ class ECORE_API CUI_Camera
     // rather than mouse-button state.
     bool         m_WalkMode;
     float        m_WalkSpeed;
+    // Snapshot at EnterWalkMode — used to revert when the user cancels
+    // (ESC or RMB). Enter/LMB commit the new position by skipping restore.
+    Fvector      m_WalkSavedPosition;
+    Fvector      m_WalkSavedHPB;
 
     Fmatrix      m_CamMat;
     Fvector      m_HPB;
@@ -74,10 +78,11 @@ public:
     bool KeyDown(WORD Key, TShiftState Shift);
     bool KeyUp(WORD Key, TShiftState Shift);
 
-    // Walk navigation. Entry hides the cursor and stays captured until
-    // ExitWalkMode runs; ESC is wired to the exit path in ApplyShortCut.
+    // Walk navigation. Entry hides the cursor and stays captured until exit.
+    // commit=true keeps the navigated-to position; commit=false reverts to
+    // the camera state captured at EnterWalkMode (Blender-style cancel).
     void EnterWalkMode();
-    void ExitWalkMode();
+    void ExitWalkMode(bool commit = true);
     bool IsInWalkMode() const
     {
         return m_WalkMode;
