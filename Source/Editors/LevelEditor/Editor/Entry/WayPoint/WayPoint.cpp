@@ -33,11 +33,11 @@ void CWayPoint::GetBox(Fbox& bb)
     bb.min.x -= WAYPOINT_RADIUS;
     bb.min.z -= WAYPOINT_RADIUS;
 }
-void CWayPoint::Render(LPCSTR parent_name, bool bParentSelect)
+void CWayPoint::Render(LPCSTR parent_name, bool bParentSelect, u32 display_color)
 {
     Fvector pos;
     pos.set(m_vPosition.x, m_vPosition.y + WAYPOINT_SIZE * 0.85f, m_vPosition.z);
-    DU_impl.DrawCross(pos, WAYPOINT_RADIUS, WAYPOINT_SIZE * 0.85f, WAYPOINT_RADIUS, WAYPOINT_RADIUS, WAYPOINT_SIZE * 0.15f, WAYPOINT_RADIUS, 0x0000ff00);
+    DU_impl.DrawCross(pos, WAYPOINT_RADIUS, WAYPOINT_SIZE * 0.85f, WAYPOINT_RADIUS, WAYPOINT_RADIUS, WAYPOINT_SIZE * 0.15f, WAYPOINT_RADIUS, display_color);
     // draw links
     Fvector p1;
     p1.set(m_vPosition.x, m_vPosition.y + WAYPOINT_SIZE * 0.85f, m_vPosition.z);
@@ -66,7 +66,9 @@ void CWayPoint::Render(LPCSTR parent_name, bool bParentSelect)
     }
 
     Fvector p2;
-    u32     l = 0xff606000;
+    // Non-selected link colour follows the per-way display tint; selection
+    // highlights still override so the editor's selection cue is preserved.
+    u32     l = display_color;
     if (bParentSelect)
         l = m_bSelected ? 0xffffff00 : 0xff909000;
     for (WPLIt it = m_Links.begin(); it != m_Links.end(); it++)
@@ -266,7 +268,36 @@ void CWayObject::Construct(LPVOID data)
 {
     FClassID = OBJCLASS_WAY;
     m_Type   = wtPatrolPath;
+    m_HasColorOverride = FALSE;
+    m_ColorOverride.set(1.0f, 1.0f, 1.0f, 1.0f);
     AppendWayPoint();
+}
+
+// Suffix-based palette defaults (ARGB):
+// _walk -> warm blue, _look -> teal, fallback -> classic editor green.
+static const u32 WAY_COLOR_DEFAULT = 0xff00ff00;
+static const u32 WAY_COLOR_WALK    = 0xff4080ff;
+static const u32 WAY_COLOR_LOOK    = 0xff00c0c0;
+
+bool CWayObject::NameEndsWith(LPCSTR suffix) const
+{
+    LPCSTR nm = GetName();
+    if (!nm || !suffix) return false;
+    size_t nl = xr_strlen(nm);
+    size_t sl = xr_strlen(suffix);
+    if (sl == 0 || nl < sl) return false;
+    return _stricmp(nm + nl - sl, suffix) == 0;
+}
+
+u32 CWayObject::GetDisplayColor() const
+{
+    if (m_HasColorOverride)
+        return m_ColorOverride.get();
+    if (NameEndsWith("_walk"))
+        return WAY_COLOR_WALK;
+    if (NameEndsWith("_look"))
+        return WAY_COLOR_LOOK;
+    return WAY_COLOR_DEFAULT;
 }
 
 CWayObject::~CWayObject()
@@ -648,8 +679,9 @@ void CWayObject::Render(int priority, bool strictB2F)
     {
         RCache.set_xform_world(Fidentity);
         EDevice->SetShader(EDevice->m_WireShader);
+        const u32 dc = GetDisplayColor();
         for (WPIt it = m_WayPoints.begin(); it != m_WayPoints.end(); it++)
-            (*it)->Render(GetName(), Selected());
+            (*it)->Render(GetName(), Selected(), dc);
         if (Selected())
         {
             u32  clr = 0xFFFFFFFF;
@@ -741,6 +773,17 @@ bool CWayObject::LoadLTX(CInifile& ini, LPCSTR sect_name)
 
     m_Type = EWayType(ini.r_u32(sect_name, "type"));
 
+    if (ini.line_exist(sect_name, "color_override"))
+    {
+        m_ColorOverride.set(ini.r_u32(sect_name, "color_override"));
+        m_HasColorOverride = TRUE;
+    }
+    else
+    {
+        m_HasColorOverride = FALSE;
+        m_ColorOverride.set(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
     return true;
 }
 
@@ -785,6 +828,9 @@ void CWayObject::SaveLTX(CInifile& ini, LPCSTR sect_name)
         }
     }
     ini.w_u32(sect_name, "type", m_Type);
+
+    if (m_HasColorOverride)
+        ini.w_u32(sect_name, "color_override", m_ColorOverride.get());
 }
 
 bool CWayObject::LoadStream(IReader& F)
@@ -831,6 +877,19 @@ bool CWayObject::LoadStream(IReader& F)
     R_ASSERT(F.find_chunk(WAYOBJECT_CHUNK_TYPE));
     m_Type = EWayType(F.r_u32());
 
+    // Optional override chunk — older saves don't carry one. Absent means the
+    // way uses its suffix-based default colour.
+    if (F.find_chunk(WAYOBJECT_CHUNK_COLOR))
+    {
+        m_ColorOverride.set(F.r_u32());
+        m_HasColorOverride = TRUE;
+    }
+    else
+    {
+        m_HasColorOverride = FALSE;
+        m_ColorOverride.set(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
     return true;
 }
 
@@ -876,6 +935,15 @@ void CWayObject::SaveStream(IWriter& F)
     F.open_chunk(WAYOBJECT_CHUNK_TYPE);
     F.w_u32(m_Type);
     F.close_chunk();
+
+    // Optional. Only emitted when an override is active so untouched ways
+    // remain byte-identical to pre-feature saves.
+    if (m_HasColorOverride)
+    {
+        F.open_chunk(WAYOBJECT_CHUNK_COLOR);
+        F.w_u32(m_ColorOverride.get());
+        F.close_chunk();
+    }
 }
 
 bool CWayObject::ExportGame(SExportStreams* F)
@@ -955,6 +1023,12 @@ void CWayObject::FillProp(LPCSTR pref, PropItemVec& items)
     FName = GetName();
     V     = PHelper().CreateNameCB(items, PrepareKey(pref, "Way Name"), &FName, NULL, NULL, RTextValue::TOnAfterEditEvent(this, &CCustomObject::OnObjectNameAfterEdit));
     V->OnChangeEvent.bind(this, &CWayObject::OnNameChange);
+
+    // Display tint. The enable flag and the colour are aggregated across the
+    // current selection by UIPropertiesForm — editing either propagates to
+    // every selected way (same path that multi-rename uses).
+    PHelper().CreateBOOL(items, PrepareKey(pref, "Custom Color\\Enabled"), &m_HasColorOverride);
+    PHelper().CreateFColor(items, PrepareKey(pref, "Custom Color\\Color"), &m_ColorOverride);
 
     if (IsPointMode())
     {

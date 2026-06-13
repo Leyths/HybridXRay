@@ -18,6 +18,7 @@ class CWayPoint
     friend class CPatrolPath;
     friend class CWayObject;
     friend class TfrmPropertiesWayPoint;
+    friend class ESceneWayTool;  // pair-line render reads m_vPosition directly
     shared_str m_Name;
     Fvector    m_vPosition;
     Flags32    m_Flags;
@@ -30,7 +31,9 @@ class CWayPoint
 public:
     CWayPoint(LPCSTR name);
     ~CWayPoint();
-    void Render(LPCSTR parent_name, bool bParentSelect);
+    // display_color: ARGB tint for this point's cross marker and unselected-link
+    // lines. Selection highlights (yellow link, white box) still override.
+    void Render(LPCSTR parent_name, bool bParentSelect, u32 display_color);
     bool RayPick(float& distance, const Fvector& S, const Fvector& D);
     bool FrustumPick(const CFrustum& frustum);
     bool FrustumSelect(int flag, const CFrustum& frustum);
@@ -57,8 +60,15 @@ protected:
     friend class TfrmPropertiesWayPoint;
     friend class CPatrolPath;
     friend class CPatrolPoint;
+    friend class ESceneWayTool;  // pair-line render reaches m_WayPoints directly
     EWayType              m_Type;
     WPVec                 m_WayPoints;
+    // Optional per-way display tint. When m_HasColorOverride is FALSE,
+    // GetDisplayColor() infers a default from the way's name suffix
+    // (_walk -> blue, _look -> teal, otherwise green). Persisted via the
+    // optional WAYOBJECT_CHUNK_COLOR chunk; written only when overridden.
+    BOOL                  m_HasColorOverride;
+    Fcolor                m_ColorOverride;
     typedef CCustomObject inherited;
     CWayPoint*            FindWayPoint(const shared_str& nm);
     void                  FindWPByName(LPCSTR new_name, bool& res)
@@ -138,6 +148,14 @@ public:
     virtual void           FillProp(LPCSTR pref, PropItemVec& items);
 
     virtual bool           OnSelectionRemove();
+
+    // Effective ARGB tint for this way, applying override if set, otherwise
+    // the suffix-based default (_walk -> blue, _look -> teal, else green).
+    u32                    GetDisplayColor() const;
+
+    // True when the way's name ends in the given suffix (case-insensitive).
+    // Used by ESceneWayTool to find matching _walk/_look pairs.
+    bool                   NameEndsWith(LPCSTR suffix) const;
 
     virtual const Fvector& GetPosition() const
     {

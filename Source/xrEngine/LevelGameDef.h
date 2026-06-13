@@ -61,6 +61,10 @@ extern ENGINE_API xr_token rpoint_game_type[];
 #define WAYOBJECT_CHUNK_LINKS   0x0003
 #define WAYOBJECT_CHUNK_TYPE    0x0004
 #define WAYOBJECT_CHUNK_NAME    0x0005
+// Optional. Present only when CWayObject::m_HasColorOverride is set.
+// Old editors silently skip the unknown chunk; new editors treat absence as
+// "no override" and fall back to the suffix-based default colour.
+#define WAYOBJECT_CHUNK_COLOR   0x0006
 
 /*
 - chunk RPOINT_CHUNK

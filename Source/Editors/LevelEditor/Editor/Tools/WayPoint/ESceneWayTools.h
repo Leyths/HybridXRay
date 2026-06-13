@@ -4,6 +4,11 @@ class ESceneWayTool: public ESceneCustomOTool
 {
     typedef ESceneCustomOTool inherited;
 
+    // Last logged (walk_count, look_count) per pair-base-name. OnRender
+    // re-evaluates every frame and only emits a Msg() when the tuple changes,
+    // so a steady-state mismatch produces a single log line.
+    xr_map<xr_string, std::pair<u32, u32>> m_PairLogCache;
+
 protected:
     // controls
     virtual void CreateControls();
@@ -31,7 +36,10 @@ public:
     virtual void Clear(bool bSpecific = false)
     {
         inherited::Clear(bSpecific);
+        m_PairLogCache.clear();
     }
+
+    virtual void OnRender(int priority, bool strictB2F);
     // IO
     virtual bool IsNeedSave()
     {
