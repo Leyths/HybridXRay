@@ -34,6 +34,12 @@ public:
             h      = 0;
             r      = 0;
         }
+        // Surface normal of the wallmark's first projected triangle. Used by
+        // the gizmo to construct an in-plane pose matrix without storing the
+        // normal explicitly (verts are world-space, so any tri's normal is
+        // the surface normal). Falls back to world-up if the wallmark has
+        // no geometry.
+        Fvector compute_normal() const;
     };
     DEFINE_VECTOR(wallmark*, WMVec, WMVecIt);
     struct wm_slot
@@ -195,6 +201,13 @@ public:
     virtual void GetBBox(Fbox& bb, bool bSelOnly);
     BOOL         AddWallmark(const Fvector& start, const Fvector& dir);
     BOOL         MoveSelectedWallmarkTo(const Fvector& start, const Fvector& dir);
+
+    // Re-project the lone selected wallmark with explicit pose params. Casts a
+    // ray from `new_world_pos + normal*0.25` along -normal to find the surface
+    // contact, then re-runs AddWallmark_internal with the new (w,h,r). Used by
+    // the gizmo (move and rotate-around-normal handles map here). Returns
+    // FALSE if no single wallmark is selected or re-projection failed.
+    BOOL         RebuildSelectedWallmark(const Fvector& new_world_pos, float new_r, float new_w, float new_h);
 
     // Drag helpers. Returns the lone selected wallmark, or nullptr if either
     // nothing or more than one is selected. PickSurfacePoint resolves a ray

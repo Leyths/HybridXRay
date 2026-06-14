@@ -882,7 +882,7 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
     if (!snap_list)
     {
         if (!silent)
-            ELog.DlgMsg(mtError, "& Fill and activate snap list.");
+            ELog.DlgMsg(mtError, "Wallmark needs a target surface.\n\n1. Open the Snap List in the right toolbar.\n2. Add the scene objects you want wallmarks to stick to.\n3. Tick the \"Enable/Show Snap List\" checkbox.");
         return FALSE;
     }
     // pick contact poly
@@ -1062,6 +1062,15 @@ void ESceneWallmarkTool::EnsureHostObjectName(wallmark* w)
         w->src_obj_name = host->GetName();
 }
 
+Fvector ESceneWallmarkTool::wallmark::compute_normal() const
+{
+    if (verts.size() < 3)
+        return Fvector().set(0.f, 1.f, 0.f);
+    Fvector n;
+    n.mknormal(verts[0].p, verts[1].p, verts[2].p);
+    return n;
+}
+
 BOOL ESceneWallmarkTool::MoveSelectedWallmarkTo(const Fvector& start, const Fvector& dir)
 {
     if (!m_Flags.is(flDrawWallmark))
@@ -1089,6 +1098,43 @@ BOOL ESceneWallmarkTool::MoveSelectedWallmarkTo(const Fvector& start, const Fvec
     {
         WMVec& items = wm->parent->items;
         WMVecIt it   = std::find(items.begin(), items.end(), wm);
+        if (it != items.end())
+        {
+            *it = items.back();
+            items.pop_back();
+        }
+    }
+    wm_destroy(wm);
+    return TRUE;
+}
+
+BOOL ESceneWallmarkTool::RebuildSelectedWallmark(const Fvector& new_world_pos, float new_r, float new_w, float new_h)
+{
+    if (!m_Flags.is(flDrawWallmark))
+        return FALSE;
+
+    wallmark* wm = FindSingleSelectedWallmark();
+    if (!wm)
+        return FALSE;
+
+    // Same pattern as MoveSelectedWallmarkTo, but the ray comes from above the
+    // wallmark along its current normal — so the re-projection lands at
+    // `new_world_pos` regardless of camera angle. This is what makes the
+    // gizmo work cleanly: ImGuizmo doesn't care about the camera ray.
+    const Fvector normal    = wm->compute_normal();
+    Fvector       ray_start = new_world_pos;
+    ray_start.mad(normal, 0.25f);
+    Fvector ray_dir = normal;
+    ray_dir.invert();
+
+    shared_str sh = wm->parent->sh_name;
+    shared_str tx = wm->parent->tx_name;
+    if (!AddWallmark_internal(ray_start, ray_dir, sh, tx, new_w, new_h, new_r, wm, /*silent=*/true))
+        return FALSE;
+
+    {
+        WMVec&  items = wm->parent->items;
+        WMVecIt it    = std::find(items.begin(), items.end(), wm);
         if (it != items.end())
         {
             *it = items.back();
