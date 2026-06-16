@@ -14,6 +14,8 @@
 #include "ResourceManager.h"
 #include "ImageManager.h"
 
+ECORE_API xr_vector<EditableObjectDrawItem>* g_DrawCollector = nullptr;
+
 const float     tex_w      = LOD_SAMPLE_COUNT * LOD_IMAGE_SIZE;
 const float     tex_h      = 1 * LOD_IMAGE_SIZE;
 const float     half_p_x   = 0.5f * (1.f / tex_w);
@@ -133,19 +135,34 @@ void               CEditableObject::Render(const Fmatrix& parent, int priority, 
 
                 if ((priority == pr) && (strictB2F == strict))
                 {
-                    if (surfaces)
+                    const ref_shader sh = surfaces ? (*surfaces)[s_id]->_Shader() : (*s_it)->_Shader();
+                    if (g_DrawCollector)
                     {
-                        EDevice->SetShader((*surfaces)[s_id]->_Shader());
+                        // Batched path: append one item per (mesh, surface)
+                        // and let EScene::Render's drain phase issue
+                        // SetShader once per unique shader after sorting.
+                        EditableObjectDrawItem item;
+                        item.shader      = sh;
+                        item.surf        = *s_it;
+                        item.parent      = parent;
+                        item.is_skeleton = !!IsSkeleton();
+                        for (EditMeshIt _M = m_Meshes.begin(); _M != m_Meshes.end(); _M++)
+                        {
+                            item.mesh = *_M;
+                            g_DrawCollector->push_back(item);
+                        }
                     }
                     else
                     {
-                        EDevice->SetShader((*s_it)->_Shader());
+                        // Immediate path: alpha passes, RenderSingle,
+                        // RenderSelection callers etc.
+                        EDevice->SetShader(sh);
+                        for (EditMeshIt _M = m_Meshes.begin(); _M != m_Meshes.end(); _M++)
+                            if (IsSkeleton())
+                                (*_M)->RenderSkeleton(parent, *s_it);
+                            else
+                                (*_M)->Render(parent, *s_it);
                     }
-                    for (EditMeshIt _M = m_Meshes.begin(); _M != m_Meshes.end(); _M++)
-                        if (IsSkeleton())
-                            (*_M)->RenderSkeleton(parent, *s_it);
-                        else
-                            (*_M)->Render(parent, *s_it);
                 }
                 s_id++;
             }
@@ -302,6 +319,37 @@ void CEditableObject::PrewarmRP()
     for (SurfaceIt s = m_Surfaces.begin(); s != m_Surfaces.end(); ++s)
         if ((*s)->IsVoid())
             (*s)->_Shader();
+
+    // Surfaces are now resolved — narrow m_combo_mask from its conservative
+    // 0xFF default so EScene::Render can skip dispatches at priorities/strict
+    // combinations the reference doesn't actually contribute to.
+    RecomputeComboMask();
+}
+
+void CEditableObject::RecomputeComboMask()
+{
+    u8 mask = 0;
+    for (SurfaceIt s = m_Surfaces.begin(); s != m_Surfaces.end(); ++s)
+    {
+        // Skip un-resolved surfaces — touching _Shader() here would force the
+        // lazy create from a path that doesn't guarantee an upstream
+        // DefferedLoadRP. Leave their bits unset; the next render will hit
+        // the (priority, strict) check with whatever mask we have. Existing
+        // visible refs go through PrewarmRP which resolves shaders first.
+        if ((*s)->IsVoid())
+            continue;
+        const int  pri    = (*s)->_Priority();
+        const bool strict = (*s)->_StrictB2F();
+        if (pri < 0 || pri > 3)
+            continue;
+        mask |= (u8)(1u << (pri * 2 + (strict ? 1 : 0)));
+    }
+    // Empty-mask edge case (refs with no surfaces, or all surfaces un-
+    // resolved): fall back to 0xFF so we don't accidentally skip an object
+    // that might draw something via its non-surface path (HOM / occluder
+    // branches handle their own priorities and don't go through the surface
+    // loop, but the bbox check in CSceneObject::Render still needs to fire).
+    m_combo_mask = mask ? mask : 0xFF;
 }
 
 void CEditableObject::OnDeviceDestroy()
@@ -332,6 +380,9 @@ void CEditableObject::DefferedUnloadRP()
 {
     if (!(m_LoadState.is(LS_RBUFFERS)))
         return;
+    // Surfaces are about to be torn down — fall back to dispatch-everything
+    // so a stale narrowed mask doesn't suppress a re-creation path.
+    m_combo_mask = 0xFF;
     // skeleton
     vs_SkeletonGeom.destroy();
     // удалить буфера

@@ -70,6 +70,9 @@ CEditableObject::CEditableObject(LPCSTR name): m_physics_shell(0), m_object_xfor
     m_ModifTime             = 0;
     m_SmoothMsgSended       = false;
     m_SmoothExportMsgSended = false;
+    // 0xFF = "dispatch every combo" — RecomputeComboMask() narrows it after
+    // PrewarmRP has resolved every surface's shader. See header comment.
+    m_combo_mask            = 0xFF;
 }
 
 CEditableObject::~CEditableObject()

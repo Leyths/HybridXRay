@@ -98,10 +98,21 @@ void CSceneObject::Render(int priority, bool strictB2F)
     inherited::Render(priority, strictB2F);
     if (!m_pReference)
         return;
+    // Skip the per-object light-select + surface walk when the reference has
+    // no surfaces matching this (priority, strict) combo. Most refs only
+    // contribute at one of the 8 combos; we used to walk all 8 per object.
+    // See CEditableObject::RecomputeComboMask.
+    //
+    // Selection visualisation below (DrawSelectionBoxB / RenderBlink) runs
+    // unconditionally — it's independent of which surfaces draw.
+    const u8 combo_bit = (u8)(1u << (priority * 2 + (strictB2F ? 1 : 0)));
+    if (m_pReference->ComboMask() & combo_bit)
+    {
 #ifdef _LEVEL_EDITOR
-    Scene->SelectLightsForObject(this);
+        Scene->SelectLightsForObject(this);
 #endif
-    m_pReference->Render(_Transform(), priority, strictB2F, &m_Surfaces);
+        m_pReference->Render(_Transform(), priority, strictB2F, &m_Surfaces);
+    }
     if (Selected())
     {
         if (1 == priority)

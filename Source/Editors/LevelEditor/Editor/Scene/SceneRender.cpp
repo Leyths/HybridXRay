@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 
 #ifdef USE_ARENA_ALLOCATOR
 static const u32   s_arena_size = 32 * 1024 * 1024;
@@ -144,42 +144,102 @@ void EScene::Render(const Fmatrix& camera)
             ObjectIt    o_end = lst.end();
             for (; o_it != o_end; o_it++)
             {
-                if ((*o_it)->Visible() && (*o_it)->IsRender())
+                if (!(*o_it)->Visible() || !(*o_it)->IsRender())
+                    continue;
+                // Frustum + tiny-size cull. Objects whose bounding sphere
+                // lies entirely outside the camera frustum, OR whose
+                // projected screen area is below ~1.5 pixels, can't draw
+                // anything visible; skipping them eliminates their per-
+                // priority dispatch, surface walk, and GPU draw calls
+                // downstream. Selected objects are exempt from tiny-cull
+                // so the user never loses sight of their selection.
+                //
+                // Objects whose GetBox returns false (lights, way points,
+                // etc.) bypass both tests — small visual handles that need
+                // to show up regardless of camera direction.
+                //
+                // Threshold derivation: CalcSSA returns R^2 / dist^2 (FOV-
+                // independent ratio). At 90 deg FOV and 1920px wide
+                // viewport, ~1 px maps to (R/dist) ~= 1/960 ~= 1e-3, so
+                // (R/dist)^2 ~= 1.1e-6. 2e-6 ~= 1.5 px square, conservative.
+                static const float SSA_TINY = 2.0e-6f;
+                Fbox bb;
+                if ((*o_it)->GetBox(bb))
                 {
-                    float distSQ = EDevice->vCameraPosition.distance_to_sqr((*o_it)->FPosition);
-                    mapRenderObjects.insertInAnyWay(distSQ, *o_it);
+                    Fvector C;
+                    float   R;
+                    bb.getsphere(C, R);
+                    if (!::Render->ViewBase.testSphere_dirty(C, R))
+                        continue;
+                    const float dsq = EDevice->vCameraPosition.distance_to_sqr(C);
+                    if (!(*o_it)->Selected() && R * R < SSA_TINY * dsq)
+                        continue;
                 }
+                float distSQ = EDevice->vCameraPosition.distance_to_sqr((*o_it)->FPosition);
+                mapRenderObjects.insertInAnyWay(distSQ, *o_it);
             }
         }
     }
 
-    // priority #0
-    // normal
-    mapRenderObjects.traverseLR(object_Normal_0);
+    // Reused across all normal-pass priorities for the current frame; static
+    // to keep the heap allocation across frames.
+    static xr_vector<EditableObjectDrawItem> s_batch;
+
+    auto drain_batch = [&]() {
+        // Sort by shader handle so identical shaders cluster — drain binds
+        // each unique shader exactly once. Sub-sort key (mesh, surf) doesn't
+        // matter for correctness, just for cache locality, so skip it.
+        std::sort(s_batch.begin(), s_batch.end(),
+                  [](const EditableObjectDrawItem& a, const EditableObjectDrawItem& b) {
+                      return a.shader < b.shader;
+                  });
+        ref_shader prev_shader;   // default-constructed = null
+        for (const EditableObjectDrawItem& it : s_batch)
+        {
+            if (it.shader != prev_shader)
+            {
+                EDevice->SetShader(it.shader);
+                prev_shader = it.shader;
+            }
+            RCache.set_xform_world(it.parent);
+            if (it.is_skeleton)
+                it.mesh->RenderSkeleton(it.parent, it.surf);
+            else
+                it.mesh->Render(it.parent, it.surf);
+        }
+    };
+
+    auto run_normal_batched = [&](void (*normal_fn)(EScene::mapObject_Node*)) {
+        s_batch.clear();
+        g_DrawCollector = &s_batch;
+        mapRenderObjects.traverseLR(normal_fn);
+        g_DrawCollector = nullptr;
+        drain_batch();
+    };
+
+    // priority #0 — normal pass batched (sort by shader, collapse SetShader
+    // calls), alpha pass direct (back-to-front depth order must be preserved
+    // for correct blending).
+    run_normal_batched(object_Normal_0);
     RENDER_SCENE_TOOLS(0, false);
-    // alpha
     mapRenderObjects.traverseRL(object_StrictB2F_0);
     RENDER_SCENE_TOOLS(0, true);
 
     // priority #1
-    // normal
-    mapRenderObjects.traverseLR(object_Normal_1);
+    run_normal_batched(object_Normal_1);
     RENDER_SCENE_TOOLS(1, false);
-    // alpha
     mapRenderObjects.traverseRL(object_StrictB2F_1);
     RENDER_SCENE_TOOLS(1, true);
+
     // priority #2
-    // normal
-    mapRenderObjects.traverseLR(object_Normal_2);
+    run_normal_batched(object_Normal_2);
     RENDER_SCENE_TOOLS(2, false);
-    // alpha
     mapRenderObjects.traverseRL(object_StrictB2F_2);
     RENDER_SCENE_TOOLS(2, true);
+
     // priority #3
-    // normal
-    mapRenderObjects.traverseLR(object_Normal_3);
+    run_normal_batched(object_Normal_3);
     RENDER_SCENE_TOOLS(3, false);
-    // alpha
     mapRenderObjects.traverseRL(object_StrictB2F_3);
     RENDER_SCENE_TOOLS(3, true);
 

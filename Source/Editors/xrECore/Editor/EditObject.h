@@ -221,6 +221,24 @@ DEFINE_VECTOR(SBonePart, BPVec, BPIt);
 
 const u32       FVF_SV = D3DFVF_XYZ | D3DFVF_TEX1 | D3DFVF_NORMAL;
 
+// Deferred draw record used by the EScene::Render normal-pass batching
+// pipeline. When g_DrawCollector is non-null, CEditableObject::Render
+// appends one of these per (mesh, surface) draw instead of issuing
+// SetShader + DrawIndexedPrimitive immediately. EScene::Render then sorts
+// the collected list by shader and replays the draws — collapsing tens of
+// thousands of redundant shader binds into one per unique shader. Alpha
+// passes (strictB2F == true) are NOT batched because they need back-to-
+// front depth order for correct blending.
+struct ECORE_API EditableObjectDrawItem
+{
+    ref_shader     shader;        // sort key; bound on shader change
+    CEditableMesh* mesh;
+    CSurface*      surf;          // mesh->Render(..., surf) for vertex colour etc.
+    Fmatrix        parent;        // world transform, set per item before draw
+    bool           is_skeleton;
+};
+ECORE_API extern xr_vector<EditableObjectDrawItem>* g_DrawCollector;
+
 class ECORE_API CEditableObject: public IKinematics, public CPhysicsShellHolderEditorBase
 {
     friend class CSceneObject;
@@ -345,10 +363,23 @@ public:
     // gets DDS requests enqueued at scene-load time instead of at first-pan.
     void PrewarmRP();
 
+    // Per-(priority, strict) "has surfaces here?" bitmask, indexed by
+    // (priority * 2 + (strict ? 1 : 0)). Each scene-object's Render is
+    // dispatched 8 times per frame (4 priorities x normal/alpha); most
+    // references only have surfaces at one combo. The renderer consults
+    // this mask before walking the surface loop / running per-object light
+    // selection, skipping the no-op dispatches entirely. Default is 0xFF
+    // (dispatch everything = current behaviour) so an out-of-date or
+    // not-yet-computed mask never under-renders.
+    u8   ComboMask() const { return m_combo_mask; }
+    void RecomputeComboMask();
+
 protected:
 
     void OnChangeTransform(PropValue* prop);
     void OnChangeShader(PropValue* prop);
+
+    u8 m_combo_mask;
 
 public:
     enum
