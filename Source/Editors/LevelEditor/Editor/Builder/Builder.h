@@ -154,6 +154,7 @@ public:
     BOOL MakeHOM();
     BOOL MakeSOM();
     BOOL MakeAIMap();
+    BOOL MakeWallmarks();
 
     void OnRender();
 };

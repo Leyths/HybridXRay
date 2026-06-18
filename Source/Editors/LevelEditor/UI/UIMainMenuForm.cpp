@@ -200,6 +200,12 @@ void UIMainMenuForm::Draw()
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::MenuItem("Make Wallmarks"_RU >> u8"Экспорт Воллмарков", ""))
+                {
+                    ExecCommand(COMMAND_MAKE_WALLMARKS);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 ImGui::EndMenu();
             }
             if (ImGui::IsItemHovered())

@@ -990,6 +990,20 @@ CCommandVar CommandMakeDetails(CCommandVar p1, CCommandVar p2)
     return FALSE;
 }
 
+CCommandVar CommandMakeWallmarks(CCommandVar p1, CCommandVar p2)
+{
+    if (!Scene->locked())
+    {
+        if (mrYes == ELog.DlgMsg(mtConfirmation, mbYes | mbNo, "Are you sure to export wallmarks?"))
+            return Builder.MakeWallmarks();
+    }
+    else
+    {
+        ELog.DlgMsg(mtError, "! Scene sharing violation");
+    }
+    return FALSE;
+}
+
 CCommandVar CommandMakeHOM(CCommandVar p1, CCommandVar p2)
 {
     if (!Scene->locked())
@@ -1341,6 +1355,7 @@ void CLevelMain::RegisterCommands()
     REGISTER_CMD_SE(COMMAND_MAKE_GAME, "Compile\\Make Game", xr_shortcut(VK_F5, false, false, false), CommandMakeGame, false);
     REGISTER_CMD_SE(COMMAND_MAKE_AIMAP, "Compile\\Make AI Map", xr_shortcut(), CommandMakeAIMap, false);
     REGISTER_CMD_SE(COMMAND_MAKE_DETAILS, "Compile\\Make Details", xr_shortcut(), CommandMakeDetails, false);
+    REGISTER_CMD_SE(COMMAND_MAKE_WALLMARKS, "Compile\\Make Wallmarks", xr_shortcut(), CommandMakeWallmarks, false);
     REGISTER_CMD_SE(COMMAND_MAKE_HOM, "Compile\\Make HOM", xr_shortcut(), CommandMakeHOM, false);
     REGISTER_CMD_SE(COMMAND_MAKE_SOM, "Compile\\Make SOM", xr_shortcut(), CommandMakeSOM, false);
     REGISTER_CMD_SE(COMMAND_INVERT_SELECTION_ALL, "Selection\\Invert", xr_shortcut('I', false, false, false), CommandInvertSelectionAll, false);

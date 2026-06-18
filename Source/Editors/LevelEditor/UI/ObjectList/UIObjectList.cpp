@@ -276,24 +276,23 @@ void UIObjectList::Refresh()
     {
         // Wallmarks aren't CCustomObjects (the wallmark tool stores them as
         // raw structs in `wm_slot::items`). We emit one list row per
-        // wallmark, labelled "<host-object>/<texture-basename> [#N]" when
-        // the host scene object is known. Wallmarks loaded from older saves
-        // have no host info, so they fall back to "<texture-basename> [#N]".
+        // wallmark. Dynamic marks come FIRST (sorted to the top) labelled by
+        // their unique `name` (the runtime visibility key). Static marks
+        // follow, labelled "<host-object>/<texture-basename> [#N]" when the
+        // host scene object is known; older saves with no host info fall
+        // back to "<texture-basename> [#N]".
         ESceneWallmarkTool* wmt = (ESceneWallmarkTool*)Scene->GetTool(OBJCLASS_WM);
         if (wmt)
         {
-            for (ESceneWallmarkTool::wm_slot* slot: wmt->marks)
-            {
-                if (!slot)
-                    continue;
-                const char* tx_full = slot->tx_name.c_str() ? slot->tx_name.c_str() : "";
-                const char* tx_base = strrchr(tx_full, '\\');
-                tx_base             = tx_base ? tx_base + 1 : tx_full;
-                if (!*tx_base)
-                    tx_base = "wallmark";
+            auto emit_static = [&](ESceneWallmarkTool::wm_slot* slot, const char* tx_base) {
                 int idx = 0;
                 for (ESceneWallmarkTool::wallmark* w: slot->items)
                 {
+                    if (w->flags.is(ESceneWallmarkTool::wallmark::flDynamic))
+                    {
+                        ++idx;   // keep [#N] stable across selective passes
+                        continue;
+                    }
                     // Lazy resolve: loaded-from-disk wallmarks have no
                     // src_obj_name; recover it via a ray-pick from the
                     // wallmark's surface position. Cached on the wallmark
@@ -312,6 +311,42 @@ void UIObjectList::Refresh()
                     Item->m_Wallmark  = w;
                     Item->bIsSelected = !!w->flags.is(ESceneWallmarkTool::wallmark::flSelected);
                 }
+            };
+            auto emit_dynamic = [&](ESceneWallmarkTool::wm_slot* slot) {
+                for (ESceneWallmarkTool::wallmark* w: slot->items)
+                {
+                    if (!w->flags.is(ESceneWallmarkTool::wallmark::flDynamic))
+                        continue;
+                    // Dynamic marks carry their own identifier; that's what
+                    // the runtime keys visibility on, so it's what the user
+                    // needs to see in the list. Fall back to a placeholder
+                    // if the name is missing for any reason.
+                    const char* label = w->name.size() ? w->name.c_str() : "(unnamed dynamic)";
+                    UIObjectListItem* Item = static_cast<UIObjectListItem*>(Form->m_Root.AppendItem(label, {}, 0));
+                    VERIFY(Item);
+                    Item->m_Wallmark  = w;
+                    Item->bIsSelected = !!w->flags.is(ESceneWallmarkTool::wallmark::flSelected);
+                }
+            };
+
+            // Pass 1: dynamic marks (top of list).
+            for (ESceneWallmarkTool::wm_slot* slot: wmt->marks)
+            {
+                if (!slot)
+                    continue;
+                emit_dynamic(slot);
+            }
+            // Pass 2: static marks (below).
+            for (ESceneWallmarkTool::wm_slot* slot: wmt->marks)
+            {
+                if (!slot)
+                    continue;
+                const char* tx_full = slot->tx_name.c_str() ? slot->tx_name.c_str() : "";
+                const char* tx_base = strrchr(tx_full, '\\');
+                tx_base             = tx_base ? tx_base + 1 : tx_full;
+                if (!*tx_base)
+                    tx_base = "wallmark";
+                emit_static(slot, tx_base);
             }
         }
     }

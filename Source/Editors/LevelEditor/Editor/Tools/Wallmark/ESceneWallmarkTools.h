@@ -16,6 +16,7 @@ public:
         {
             flSelected = (1 << 0),
             flHidden   = (1 << 1),   // per-wallmark visibility for the Object List Show/Hide buttons
+            flDynamic  = (1 << 2),   // mark is exported to level.dwm and rendered by the engine at runtime — bypasses xrLC entirely (see Dynamic Wallmarks plan A1/A4/A5)
         };
         wm_slot*   parent;
         float      w, h, r;
@@ -29,6 +30,11 @@ public:
         // save/load chunk format doesn't carry it, so loaded wallmarks start
         // empty and get resolved on demand. Used for the Object List label.
         shared_str src_obj_name;
+        // Stable identifier for dynamic marks (see flDynamic). Set at
+        // placement via GenerateDynamicWallmarkName; serialised in v5+; the
+        // engine uses it as the key for the show / hide visibility API.
+        // Empty for non-dynamic marks.
+        shared_str name;
         wallmark()
         {
             flags.zero();
@@ -94,7 +100,10 @@ private:
     // list. Used by RebuildWallmark to keep the re-projection pinned to the
     // wallmark's original host object, even if the snap list now contains
     // something different (or nothing).
-    BOOL           AddWallmark_internal(const Fvector& S, const Fvector& D, shared_str s, shared_str t, float w, float h, float r, wallmark* exclude_from_similar = nullptr, bool silent = false, bool ignore_use = false, ObjectList* override_list = nullptr);
+    // is_dynamic / dyn_name: stamp the new mark with flDynamic + name.
+    // Placement passes the brush state + a freshly-generated unique name;
+    // rebuild paths preserve the original wallmark's values.
+    BOOL           AddWallmark_internal(const Fvector& S, const Fvector& D, shared_str s, shared_str t, float w, float h, float r, wallmark* exclude_from_similar = nullptr, bool silent = false, bool ignore_use = false, ObjectList* override_list = nullptr, bool is_dynamic = false, const shared_str& dyn_name = shared_str());
 
     void           RefiningSlots();
 
@@ -120,6 +129,11 @@ public:
     float      m_MarkRotate;
     shared_str m_ShName;
     shared_str m_TxName;
+    // Brush flag — toggled in the LeftBar "Next Placement" section. When TRUE,
+    // the next placed wallmark gets wallmark::flDynamic set and a freshly-
+    // generated unique name (see GenerateDynamicWallmarkName below). Dynamic
+    // marks bypass xrLC and are exported separately to level.dwm.
+    BOOL       m_Dynamic;
 
     // Set by OnSelectedWMChanged when the user edits Width / Height / Rotate
     // / Shader / Texture in the Properties Panel; consumed by the next
@@ -246,6 +260,10 @@ private:
     // through the PropValue's pointer; we just stash the wallmark to rebuild
     // on the next OnFrame.
     void         OnSelectedWMChanged(PropValue*);
+    // OnChange for the Name field (dynamic marks only). Disambiguates the
+    // user's typed name against the rest of the dynamic-mark name set;
+    // dispatches a property refresh so any auto-suffix is visible.
+    void         OnSelectedWMNameChanged(PropValue*);
 public:
 
     // utils
@@ -280,4 +298,15 @@ public:
     // along the wallmark's surface normal back into the snap list to find the
     // scene object beneath, and caches the result on the wallmark.
     void         EnsureHostObjectName(wallmark* w);
+
+    // Unique-name generator for dynamic wallmarks. Scans existing dynamic
+    // marks for taken names and returns the first free `wm_NNN` slot (3-digit
+    // zero-padded, widening if it overflows). Also used by the Properties
+    // Panel rename path to resolve user-entered name collisions.
+    //   - `exclude` is skipped during the collision check, so renaming a
+    //     mark to its current name (or any new name) doesn't false-positive
+    //     against itself.
+    //   - `preferred` is the user's requested name (empty for fresh placement);
+    //     if non-empty, we try it verbatim first and only suffix on collision.
+    shared_str   GenerateDynamicWallmarkName(wallmark* exclude = nullptr, const shared_str& preferred = shared_str());
 };

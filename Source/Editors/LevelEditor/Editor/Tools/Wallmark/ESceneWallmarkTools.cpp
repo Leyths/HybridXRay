@@ -1,7 +1,12 @@
 ﻿#include "stdafx.h"
 
 // chunks
-#define WM_VERSION                0x0004
+//
+// Version history:
+//   0x0003  legacy items (no per-item w/h/r — defaults applied on load)
+//   0x0004  ITEMS2 chunk: per-item w/h/r
+//   0x0005  + per-item name (dynamic wallmark identifier; empty for static)
+#define WM_VERSION                0x0005
 
 #define WM_CHUNK_VERSION          0x0001
 #define WM_CHUNK_FLAGS            0x0002
@@ -23,6 +28,7 @@ ESceneWallmarkTool::ESceneWallmarkTool(): ESceneToolBase(OBJCLASS_WM)
     //.    m_ShName		= "effects\\wallmarkblend";
     m_ShName         = "effects\\wallmarkmult";
     m_TxName         = "";
+    m_Dynamic        = FALSE;
     m_PendingRebuild = nullptr;
 }
 
@@ -424,7 +430,7 @@ bool ESceneWallmarkTool::LoadStream(IReader& F)
 
     R_ASSERT(F.r_chunk(WM_CHUNK_VERSION, &version));
 
-    if (version != 0x0003 && version != WM_VERSION)
+    if (version != 0x0003 && version != 0x0004 && version != WM_VERSION)
     {
         ELog.Msg(mtError, "& Static Wallmark: Unsupported version.");
         return false;
@@ -515,6 +521,11 @@ bool ESceneWallmarkTool::LoadStream(IReader& F)
                             W->w      = O->r_float();
                             W->h      = O->r_float();
                             W->r      = O->r_float();
+                            // v5+ carries the dynamic-mark name; v4 files load
+                            // with empty names (and no flDynamic in the flags
+                            // field, so they're treated as static).
+                            if (version >= 0x0005)
+                                O->r_stringZ(W->name);
                             W->verts.resize(O->r_u32());
                             O->r(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
                         }
@@ -552,11 +563,13 @@ void ESceneWallmarkTool::SaveStream(IWriter& F)
 {
     inherited::SaveStream(F);
 
+    // SHOC's runtime can't ingest the v5 name field — keep it at v4 there.
+    // Other targets (COP and friends) get the full v5 layout. Dynamic-mark
+    // support is therefore implicitly COP+ only.
+    const u16 disk_version = (xrGameManager::GetGame() == EGame::SHOC) ? u16(0x0004) : u16(WM_VERSION);
+
     F.open_chunk(WM_CHUNK_VERSION);
-    if (xrGameManager::GetGame() == EGame::SHOC)
-        F.w_u16(WM_VERSION - 1);
-    else
-        F.w_u16(WM_VERSION);
+    F.w_u16(disk_version);
     F.close_chunk();
 
     F.open_chunk(WM_CHUNK_FLAGS);
@@ -590,6 +603,8 @@ void ESceneWallmarkTool::SaveStream(IWriter& F)
                 F.w_float(W->w);
                 F.w_float(W->h);
                 F.w_float(W->r);
+                if (disk_version >= 0x0005)
+                    F.w_stringZ(W->name);
                 F.w_u32(W->verts.size());
                 F.w(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
             }
@@ -638,6 +653,9 @@ void ESceneWallmarkTool::SaveSelection(IWriter& F)
             F.w_float(W->w);
             F.w_float(W->h);
             F.w_float(W->r);
+            // Clipboard payload always uses the latest WM_VERSION (we
+            // control both ends), so the name is unconditionally written.
+            F.w_stringZ(W->name);
             F.w_u32(W->verts.size());
             F.w(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
         }
@@ -654,7 +672,7 @@ bool ESceneWallmarkTool::LoadSelection(IReader& F)
     u16 version = 0;
     if (!F.r_chunk(WM_CHUNK_VERSION, &version))
         return false;
-    if (version != 0x0003 && version != WM_VERSION)
+    if (version != 0x0003 && version != 0x0004 && version != WM_VERSION)
     {
         ELog.Msg(mtError, "& Static Wallmark: Unsupported version.");
         return false;
@@ -695,12 +713,19 @@ bool ESceneWallmarkTool::LoadSelection(IReader& F)
                     W->flags.set(wallmark::flSelected, TRUE);
                     O->r(&W->bbox, sizeof(W->bbox));
                     O->r(&W->bounds, sizeof(W->bounds));
-                    // Some legacy saves (version 0x0003 in LoadStream) didn't
-                    // carry w/h/r per item; for safety we assume the WM_VERSION
-                    // (v4) layout since SaveSelection above always emits it.
+                    // SaveSelection always emits the v5 layout (we control
+                    // both ends), so v3-only clipboard payloads are not a
+                    // real scenario; we read w/h/r unconditionally.
                     W->w = O->r_float();
                     W->h = O->r_float();
                     W->r = O->r_float();
+                    if (version >= 0x0005)
+                        O->r_stringZ(W->name);
+                    // Pasted dynamic marks need a fresh unique name — the
+                    // serialized one may already be taken by the source mark
+                    // we're duplicating.
+                    if (W->flags.is(wallmark::flDynamic))
+                        W->name = GenerateDynamicWallmarkName(W);
                     W->parent = slot;
                     W->verts.resize(O->r_u32());
                     O->r(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
@@ -719,32 +744,107 @@ bool ESceneWallmarkTool::Export(LPCSTR path)
 {
     RefiningSlots();
 
-    xr_string fn = xr_string(path) + "level.wallmarks";
-    IWriter*  F  = FS.w_open(fn.c_str());
-    R_ASSERT(F);
-
-    F->open_chunk(1);
-    F->w_u32(marks.size());
-    for (WMSVecIt slot_it = marks.begin(); slot_it != marks.end(); slot_it++)
+    // level.wallmarks — consumed by xrLC during the next full Build to bake
+    // STATIC marks into the level geometry. Dynamic marks are deliberately
+    // excluded; they render at runtime from level.dwm instead.
     {
-        wm_slot* slot = *slot_it;
-        F->w_u32(slot->items.size());
-        if (slot->items.size())
+        xr_string fn = xr_string(path) + "level.wallmarks";
+        IWriter*  F  = FS.w_open(fn.c_str());
+        R_ASSERT(F);
+
+        F->open_chunk(1);
+        F->w_u32(marks.size());
+        for (WMSVecIt slot_it = marks.begin(); slot_it != marks.end(); slot_it++)
         {
+            wm_slot* slot = *slot_it;
+            // Count non-dynamic items first so the header is correct.
+            u32 static_count = 0;
+            for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
+                if (!(*w_it)->flags.is(wallmark::flDynamic))
+                    ++static_count;
+            F->w_u32(static_count);
+            if (static_count)
+            {
+                F->w_stringZ(slot->sh_name);
+                F->w_stringZ(slot->tx_name);
+                for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
+                {
+                    wallmark* W = *w_it;
+                    if (W->flags.is(wallmark::flDynamic))
+                        continue;
+                    F->w(&W->bounds, sizeof(W->bounds));
+                    F->w_u32(W->verts.size());
+                    F->w(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
+                }
+            }
+        }
+        F->close_chunk();
+
+        FS.w_close(F);
+    }
+
+    // level.dwm — sidecar consumed by the runtime engine. Holds DYNAMIC marks
+    // only, with their unique per-mark names. Format:
+    //   CHUNK 0x0001 VERSION   u32 version (=1)
+    //   CHUNK 0x0002 DATA      u32 slot_count
+    //                          repeat: stringZ sh, stringZ tx, u32 items
+    //                                  repeat: stringZ name, Fsphere bounds,
+    //                                          u32 vc, FVF::LIT verts[vc]
+    // See DYNAMIC_WALLMARKS_PLAN.md "level.dwm format" for the full spec.
+    {
+        xr_string fn = xr_string(path) + "level.dwm";
+
+        // Count slots that have at least one dynamic mark — empty slots are
+        // dropped so the file is compact.
+        u32 dyn_slot_count = 0;
+        for (WMSVecIt slot_it = marks.begin(); slot_it != marks.end(); slot_it++)
+        {
+            for (WMVecIt w_it = (*slot_it)->items.begin(); w_it != (*slot_it)->items.end(); ++w_it)
+                if ((*w_it)->flags.is(wallmark::flDynamic))
+                {
+                    ++dyn_slot_count;
+                    break;
+                }
+        }
+
+        IWriter* F = FS.w_open(fn.c_str());
+        R_ASSERT(F);
+
+        F->open_chunk(0x0001);
+        F->w_u32(1);   // format version
+        F->close_chunk();
+
+        F->open_chunk(0x0002);
+        F->w_u32(dyn_slot_count);
+        for (WMSVecIt slot_it = marks.begin(); slot_it != marks.end(); slot_it++)
+        {
+            wm_slot* slot = *slot_it;
+
+            u32 dyn_item_count = 0;
+            for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); ++w_it)
+                if ((*w_it)->flags.is(wallmark::flDynamic))
+                    ++dyn_item_count;
+            if (dyn_item_count == 0)
+                continue;
+
             F->w_stringZ(slot->sh_name);
             F->w_stringZ(slot->tx_name);
-            for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
+            F->w_u32(dyn_item_count);
+            for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); ++w_it)
             {
                 wallmark* W = *w_it;
+                if (!W->flags.is(wallmark::flDynamic))
+                    continue;
+                F->w_stringZ(W->name);
                 F->w(&W->bounds, sizeof(W->bounds));
                 F->w_u32(W->verts.size());
                 F->w(&*W->verts.begin(), sizeof(FVF::LIT) * W->verts.size());
             }
         }
-    }
-    F->close_chunk();
+        F->close_chunk();
 
-    FS.w_close(F);
+        FS.w_close(F);
+    }
 
     return true;
 }
@@ -903,7 +1003,7 @@ int ESceneWallmarkTool::ObjectCount()
     return count;
 }
 
-BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvector& dir, shared_str sh, shared_str tx, float width, float height, float rotate, wallmark* exclude_from_similar, bool silent, bool ignore_use, ObjectList* override_list)
+BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvector& dir, shared_str sh, shared_str tx, float width, float height, float rotate, wallmark* exclude_from_similar, bool silent, bool ignore_use, ObjectList* override_list, bool is_dynamic, const shared_str& dyn_name)
 {
     /*
     if (ObjectCount()>=MAX_WALLMARK_COUNT){
@@ -1007,7 +1107,13 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
         for (; I != E; I++)
             W->bbox.modify(I->p);
         W->bbox.getsphere(W->bounds.P, W->bounds.R);
-        W->flags.assign(wallmark::flSelected);
+        // assign() replaces the whole flag bag — preserve flDynamic from the
+        // caller (placement: brush state; rebuild: original mark's value).
+        u8 new_flags = wallmark::flSelected;
+        if (is_dynamic)
+            new_flags |= wallmark::flDynamic;
+        W->flags.assign(new_flags);
+        W->name = dyn_name;
         W->bbox.grow(EPS_L);
     }
 
@@ -1045,7 +1151,13 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
 
 BOOL ESceneWallmarkTool::AddWallmark(const Fvector& start, const Fvector& dir)
 {
-    return AddWallmark_internal(start, dir, m_ShName, m_TxName, m_MarkWidth, m_MarkHeight, m_MarkRotate);
+    // Brush state decides whether the new mark gets flDynamic + a unique
+    // name; non-dynamic placements still pass through with empty name.
+    const bool       is_dyn = !!m_Dynamic;
+    const shared_str name   = is_dyn ? GenerateDynamicWallmarkName() : shared_str();
+    return AddWallmark_internal(start, dir, m_ShName, m_TxName, m_MarkWidth, m_MarkHeight, m_MarkRotate,
+                                 /*exclude=*/nullptr, /*silent=*/false, /*ignore_use=*/false, /*override_list=*/nullptr,
+                                 is_dyn, name);
 }
 
 ESceneWallmarkTool::wallmark* ESceneWallmarkTool::FindSingleSelectedWallmark()
@@ -1078,6 +1190,54 @@ bool ESceneWallmarkTool::PickSurfacePoint(const Fvector& start, const Fvector& d
         return false;
     out_world.mad(PQ.m_Start, PQ.m_Direction, PQ.r_begin()->range);
     return true;
+}
+
+shared_str ESceneWallmarkTool::GenerateDynamicWallmarkName(wallmark* exclude, const shared_str& preferred)
+{
+    // Collect taken names across every slot. Linear in mark count, fine for
+    // the editor — sub-millisecond at any reasonable level density.
+    xr_set<shared_str> taken;
+    for (WMSVecIt slot_it = marks.begin(); slot_it != marks.end(); ++slot_it)
+    {
+        for (WMVecIt w_it = (*slot_it)->items.begin(); w_it != (*slot_it)->items.end(); ++w_it)
+        {
+            wallmark* w = *w_it;
+            if (w == exclude)
+                continue;
+            if (w->flags.is(wallmark::flDynamic) && w->name.size())
+                taken.insert(w->name);
+        }
+    }
+
+    // User-supplied name: honour verbatim if free, otherwise suffix _NN.
+    if (preferred.size())
+    {
+        if (taken.find(preferred) == taken.end())
+            return preferred;
+        string128 buf;
+        for (u32 i = 1; i < 10000; ++i)
+        {
+            xr_sprintf(buf, sizeof(buf), "%s_%02u", preferred.c_str(), i);
+            shared_str candidate(buf);
+            if (taken.find(candidate) == taken.end())
+                return candidate;
+        }
+        // Pathological collision storm — fall through to wm_NNN below.
+    }
+
+    // Fresh-placement name: wm_001, wm_002, ... 3-digit zero-padded, widening
+    // automatically beyond 999 via %u's natural overflow into 4+ digits.
+    string128 buf;
+    for (u32 i = 1; i < 1000000; ++i)
+    {
+        xr_sprintf(buf, sizeof(buf), "wm_%03u", i);
+        shared_str candidate(buf);
+        if (taken.find(candidate) == taken.end())
+            return candidate;
+    }
+    // Should never reach here at any sane level density. Return something
+    // stable so callers always get a non-empty name.
+    return shared_str("wm_overflow");
 }
 
 void ESceneWallmarkTool::EnsureHostObjectName(wallmark* w)
@@ -1136,11 +1296,19 @@ BOOL ESceneWallmarkTool::MoveSelectedWallmarkTo(const Fvector& start, const Fvec
     float      h  = wm->h;
     float      r  = wm->r;
 
+    // Preserve flDynamic + name across the rebuild — the rebuilt mark IS the
+    // same logical entity, just re-projected. Reading them before the
+    // AddWallmark_internal call (and before wm_destroy below) keeps the
+    // capture safe.
+    const bool       was_dynamic = wm->flags.is(wallmark::flDynamic);
+    const shared_str wm_name     = wm->name;
+
     // Tell AddWallmark_internal to skip `wm` in the similar-bounds replace
     // branch, otherwise it could free wm itself and we'd then double-pool it.
     // Silent: drag may scrape off the snap-list surface for a frame; don't
     // surface a dialog mid-drag.
-    if (!AddWallmark_internal(start, dir, sh, tx, w, h, r, wm, /*silent=*/true))
+    if (!AddWallmark_internal(start, dir, sh, tx, w, h, r, wm, /*silent=*/true, /*ignore_use=*/false, /*override_list=*/nullptr,
+                              was_dynamic, wm_name))
         return FALSE;
 
     // New wallmark created and inserted. Now remove the old one.
@@ -1195,7 +1363,12 @@ BOOL ESceneWallmarkTool::RebuildWallmark(wallmark* wm)
     shared_str sh           = m_PendingShName.size() ? m_PendingShName : wm->parent->sh_name;
     shared_str tx           = m_PendingTxName.size() ? m_PendingTxName : wm->parent->tx_name;
     ObjectList* override_lst = host_list.empty() ? nullptr : &host_list;
-    if (!AddWallmark_internal(ray_start, ray_dir, sh, tx, wm->w, wm->h, wm->r, wm, /*silent=*/true, /*ignore_use=*/true, override_lst))
+    // Preserve flDynamic + name across the rebuild — captured before the
+    // call so we can pass them in even though wm is about to be destroyed.
+    const bool       was_dynamic = wm->flags.is(wallmark::flDynamic);
+    const shared_str wm_name     = wm->name;
+    if (!AddWallmark_internal(ray_start, ray_dir, sh, tx, wm->w, wm->h, wm->r, wm, /*silent=*/true, /*ignore_use=*/true, override_lst,
+                              was_dynamic, wm_name))
         return FALSE;
 
     {
@@ -1237,6 +1410,10 @@ void ESceneWallmarkTool::FillToolDefaults(PropItemVec& items)
     PHelper().CreateAngle(items, "Rotate", &m_MarkRotate);
     PHelper().CreateChoose(items, "Shader", &m_ShName, smEShader);
     PHelper().CreateChoose(items, "Texture", &m_TxName, smTexture);
+    // Dynamic toggle — next mark placed is exported to level.dwm and
+    // skipped by xrLC. Per-mark Name field appears in the Properties Panel
+    // (FillPropObjects) when a dynamic mark is selected.
+    PHelper().CreateBOOL(items, "Dynamic wallmark", &m_Dynamic);
 }
 
 void ESceneWallmarkTool::OnSelectedWMChanged(PropValue*)
@@ -1299,6 +1476,36 @@ void ESceneWallmarkTool::FillPropObjects(LPCSTR pref, PropItemVec& items)
     V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMChanged);
     V = PHelper().CreateChoose(items, PrepareKey(pref, "Texture"), &m_PendingTxName, smTexture);
     V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMChanged);
+
+    // Per-mark identity — only meaningful for dynamic marks, hidden otherwise.
+    // The runtime engine keys visibility on this string (level.dwm carries
+    // it; see plan B4). Renames resolve collisions via the same
+    // disambiguator the placement path uses.
+    if (w->flags.is(wallmark::flDynamic))
+    {
+        V = PHelper().CreateRText(items, PrepareKey(pref, "Name"), &w->name);
+        V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMNameChanged);
+    }
+}
+
+void ESceneWallmarkTool::OnSelectedWMNameChanged(PropValue*)
+{
+    // The chooser/RText path has already written the user's typed string into
+    // w->name. Verify uniqueness against the rest of the dynamic-mark name
+    // set; on collision, suffix _NN. If the resolver changes the value, the
+    // PROPERTIES_UPDATE dispatch redraws the field with the disambiguated
+    // form so the user sees what was actually stored.
+    wallmark* w = FindSingleSelectedWallmark();
+    if (!w)
+        return;
+    if (!w->flags.is(wallmark::flDynamic))
+        return;
+    // Empty name -> treat as request for a fresh auto-generated one.
+    shared_str requested = w->name;
+    shared_str resolved  = GenerateDynamicWallmarkName(w, requested);
+    if (resolved != w->name)
+        w->name = resolved;
+    ExecCommand(COMMAND_UPDATE_PROPERTIES);
 }
 
 bool ESceneWallmarkTool::Validate(bool)
@@ -1335,6 +1542,11 @@ void ESceneWallmarkTool::GetStaticDesc(int& v_cnt, int& f_cnt, bool b_selected_o
 
             if (b_selected_only && !W->flags.test(wallmark::flSelected))
                 continue;
+            // Dynamic marks bypass xrLC — they ship to the engine via
+            // level.dwm and render at runtime. Excluding them here keeps
+            // the buffers ExportStatic targets correctly sized.
+            if (W->flags.is(wallmark::flDynamic))
+                continue;
 
             v_cnt += W->verts.size();
             f_cnt += W->verts.size() / 3;
@@ -1349,7 +1561,12 @@ bool ESceneWallmarkTool::ExportStatic(SceneBuilder* B, bool b_selected_only)
         wm_slot* slot = *slot_it;
         for (WMVecIt w_it = slot->items.begin(); w_it != slot->items.end(); w_it++)
         {
-            wallmark* W        = *w_it;
+            wallmark* W = *w_it;
+            // Skip dynamic marks — they're emitted to level.dwm, not baked.
+            // GetStaticDesc above also skips them so B's buffers are sized
+            // for the static-only subset.
+            if (W->flags.is(wallmark::flDynamic))
+                continue;
             int       sect_num = B->CalculateSector(W->bounds.P, W->bounds.R);
             int       m_id     = B->BuildMaterial(*slot->sh_name, COMPILER_SHADER, *slot->tx_name, 1, sect_num, false);
             u32       f_cnt    = W->verts.size() / 3;

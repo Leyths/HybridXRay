@@ -203,6 +203,30 @@ BOOL SceneBuilder::MakeDetails()
     return error_text.empty();
 }
 
+// Fast iteration path for dynamic wallmarks: re-emits level.wallmarks and
+// level.dwm without re-running xrLC. Useful when authoring dynamic decals
+// (the engine loads level.dwm directly at runtime — no compile needed).
+// Non-dynamic marks still require a full Compile->Build to land in the
+// baked geometry; this command only refreshes the sidecar files.
+BOOL SceneBuilder::MakeWallmarks()
+{
+    xr_string error_text;
+    do
+    {
+        VERIFY_COMPILE(PreparePath(), "Failed to prepare level path.", "");
+        VERIFY_COMPILE(BuildWallmarks(), "Wallmark export failed.", "");
+    }
+    while (0);
+    if (!error_text.empty())
+        ELog.DlgMsg(mtError, error_text.c_str());
+    else if (UI->NeedAbort())
+        ELog.DlgMsg(mtInformation, "& Building terminated.");
+    else
+        ELog.DlgMsg(mtInformation, "+ Wallmarks succesfully exported.");
+
+    return error_text.empty();
+}
+
 BOOL SceneBuilder::MakeHOM()
 {
     xr_string error_text = "";
