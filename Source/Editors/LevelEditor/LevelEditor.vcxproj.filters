@@ -260,6 +260,9 @@
     <ClCompile Include="UI\Tools\UIWayTool.cpp">
       <Filter>UI\Tools</Filter>
     </ClCompile>
+    <ClCompile Include="UI\Tools\UIWallmarkTool.cpp">
+      <Filter>UI\Tools</Filter>
+    </ClCompile>
     <ClCompile Include="UI\Tools\UISectorTool.cpp">
       <Filter>UI\Tools</Filter>
     </ClCompile>
@@ -701,6 +704,9 @@
       <Filter>UI\Tools</Filter>
     </ClInclude>
     <ClInclude Include="UI\Tools\UIWayTool.h">
+      <Filter>UI\Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\Tools\UIWallmarkTool.h">
       <Filter>UI\Tools</Filter>
     </ClInclude>
     <ClInclude Include="UI\Tools\UIPortalTool.h">

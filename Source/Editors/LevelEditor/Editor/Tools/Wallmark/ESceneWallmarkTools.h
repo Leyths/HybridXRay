@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+class UIWallmarkTool;
+class PropValue;
+
 class ESceneWallmarkTool: public ESceneToolBase
 {
     typedef ESceneToolBase inherited;
@@ -83,7 +86,15 @@ private:
     // double-pool the same wallmark.
     // silent: suppress user-facing dialogs (used by the drag-translate path so
     // we don't spam dialogs each frame the cursor falls off the snap list).
-    BOOL           AddWallmark_internal(const Fvector& S, const Fvector& D, shared_str s, shared_str t, float w, float h, float r, wallmark* exclude_from_similar = nullptr, bool silent = false);
+    // ignore_use: bypass the LeftBar "Use Snap List" toggle when fetching the
+    // surface list. Rebuild paths (Properties Panel w/h/r/shader/texture
+    // edits) need this — the user shouldn't have to flip the toggle just to
+    // tweak an existing wallmark's properties.
+    // override_list: if non-null, use this object list instead of the snap
+    // list. Used by RebuildWallmark to keep the re-projection pinned to the
+    // wallmark's original host object, even if the snap list now contains
+    // something different (or nothing).
+    BOOL           AddWallmark_internal(const Fvector& S, const Fvector& D, shared_str s, shared_str t, float w, float h, float r, wallmark* exclude_from_similar = nullptr, bool silent = false, bool ignore_use = false, ObjectList* override_list = nullptr);
 
     void           RefiningSlots();
 
@@ -109,6 +120,32 @@ public:
     float      m_MarkRotate;
     shared_str m_ShName;
     shared_str m_TxName;
+
+    // Set by OnSelectedWMChanged when the user edits Width / Height / Rotate
+    // / Shader / Texture in the Properties Panel; consumed by the next
+    // OnFrame, which re-projects the wallmark and refreshes the panel.
+    // Deferring avoids invalidating the PropValue pointers from inside
+    // ApplyValue's iteration.
+    wallmark*  m_PendingRebuild;
+    // Scratch fields the Properties Panel choosers bind to for the lone-
+    // selected wallmark's shader / texture. FillPropObjects copies the
+    // current slot values into these on each refresh; RebuildWallmark reads
+    // them back when re-projecting. The PropValue can't bind directly to
+    // wm->parent->sh_name because changing it would mutate every wallmark
+    // sharing the slot.
+    shared_str m_PendingShName;
+    shared_str m_PendingTxName;
+    // Snapshot of the lone selected wallmark's w / h / r / sh / tx taken at
+    // FillPropObjects time. The OnFrame deferred-rebuild compares the
+    // current wallmark state to this snapshot — if nothing changed beyond
+    // float-precision noise, the rebuild is skipped. Stops a feedback loop
+    // where rad↔deg display rounding + post-rebuild panel rebind kept
+    // re-firing ApplyValue with effectively-identical values.
+    float      m_SnapW;
+    float      m_SnapH;
+    float      m_SnapR;
+    shared_str m_SnapShName;
+    shared_str m_SnapTxName;
 
     int        ObjectCount();
 
@@ -197,6 +234,20 @@ public:
     virtual void FillPropObjects(LPCSTR pref, PropItemVec& items);
     virtual void FillProp(LPCSTR pref, PropItemVec& items) {}
 
+    // Defaults for the next placed wallmark (alignment / w / h / rotate /
+    // shader / texture). Rendered in the LeftBar by UIWallmarkTool — used to
+    // live inside FillPropObjects, but the Properties Panel now reflects the
+    // actually-selected wallmark instead.
+    void         FillToolDefaults(PropItemVec& items);
+
+private:
+    // Bound as OnChangeEvent on the per-selected-wallmark Width / Height /
+    // Rotate PropValues in FillPropObjects. The new value is already written
+    // through the PropValue's pointer; we just stash the wallmark to rebuild
+    // on the next OnFrame.
+    void         OnSelectedWMChanged(PropValue*);
+public:
+
     // utils
     virtual void GetBBox(Fbox& bb, bool bSelOnly);
     BOOL         AddWallmark(const Fvector& start, const Fvector& dir);
@@ -208,6 +259,14 @@ public:
     // the gizmo (move and rotate-around-normal handles map here). Returns
     // FALSE if no single wallmark is selected or re-projection failed.
     BOOL         RebuildSelectedWallmark(const Fvector& new_world_pos, float new_r, float new_w, float new_h);
+
+    // Re-project a specific wallmark in place: reads its current bounds.P /
+    // compute_normal() / w / h / r / parent->sh_name / tx_name, casts a ray
+    // back into the snap-list surfaces along the normal, replaces the
+    // wallmark in its slot. Used by the per-selected-wallmark Properties
+    // Panel edits — the user has already written the new value through the
+    // PropValue's raw pointer, so this just regenerates the geometry.
+    BOOL         RebuildWallmark(wallmark* wm);
 
     // Drag helpers. Returns the lone selected wallmark, or nullptr if either
     // nothing or more than one is selected. PickSurfacePoint resolves a ray

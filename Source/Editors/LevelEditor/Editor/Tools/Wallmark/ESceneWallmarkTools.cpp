@@ -16,13 +16,14 @@
 
 ESceneWallmarkTool::ESceneWallmarkTool(): ESceneToolBase(OBJCLASS_WM)
 {
-    m_MarkWidth  = 1.f;
-    m_MarkHeight = 1.f;
-    m_MarkRotate = 0.f;
+    m_MarkWidth      = 1.f;
+    m_MarkHeight     = 1.f;
+    m_MarkRotate     = 0.f;
     m_Flags.assign(flDrawWallmark);
     //.    m_ShName		= "effects\\wallmarkblend";
-    m_ShName = "effects\\wallmarkmult";
-    m_TxName = "";
+    m_ShName         = "effects\\wallmarkmult";
+    m_TxName         = "";
+    m_PendingRebuild = nullptr;
 }
 
 ESceneWallmarkTool::~ESceneWallmarkTool() {}
@@ -57,6 +58,11 @@ int ESceneWallmarkTool::RaySelect(int flag, float& distance, const Fvector& star
         if (flag == -1)
             W->flags.invert(wallmark::flSelected);
         W->flags.set(wallmark::flSelected, flag);
+        // Selection changed — refresh the Properties Panel so it shows the
+        // per-wallmark Width / Height / Rotate of the newly-selected mark.
+        // (Wallmarks aren't CCustomObjects so they don't get the dispatch
+        // CCustomObject::Select fires automatically.)
+        ExecCommand(COMMAND_UPDATE_PROPERTIES);
         return 1;
     }
     return 0;
@@ -87,6 +93,8 @@ int ESceneWallmarkTool::FrustumSelect(int flag, const CFrustum& frustum)
         }
     }
     UI->RedrawScene();
+    if (count)
+        ExecCommand(COMMAND_UPDATE_PROPERTIES);
     return count;
 }
 
@@ -100,6 +108,7 @@ void ESceneWallmarkTool::SelectObjects(bool flag)
             (*m_it)->flags.set(wallmark::flSelected, flag);
     }
     UI->RedrawScene();
+    ExecCommand(COMMAND_UPDATE_PROPERTIES);
 }
 
 void ESceneWallmarkTool::InvertSelection()
@@ -112,6 +121,7 @@ void ESceneWallmarkTool::InvertSelection()
             (*m_it)->flags.invert(wallmark::flSelected);
     }
     UI->RedrawScene();
+    ExecCommand(COMMAND_UPDATE_PROPERTIES);
 }
 
 void ESceneWallmarkTool::RemoveSelection()
@@ -133,6 +143,7 @@ void ESceneWallmarkTool::RemoveSelection()
             }
     }
     UI->RedrawScene();
+    ExecCommand(COMMAND_UPDATE_PROPERTIES);
 }
 
 int ESceneWallmarkTool::SelectionCount(bool testflag)
@@ -174,7 +185,40 @@ bool ESceneWallmarkTool::IsNeedSave()
 {
     return marks.size();
 }
-void ESceneWallmarkTool::OnFrame() {}
+void ESceneWallmarkTool::OnFrame()
+{
+    // Deferred Properties-Panel-triggered rebuild. The per-selected-wallmark
+    // PropValues hold raw pointers into the wallmark struct; RebuildWallmark
+    // frees the old struct and replaces it, so we must run it AFTER the
+    // ApplyValue iteration that fired OnSelectedWMChanged has fully unwound.
+    // Doing it here in OnFrame guarantees that, and the immediate
+    // COMMAND_UPDATE_PROPERTIES dispatch refreshes the panel with PropValues
+    // pointing at the new wallmark before the user can touch it again.
+    if (m_PendingRebuild)
+    {
+        wallmark* wm     = m_PendingRebuild;
+        m_PendingRebuild = nullptr;
+        // Epsilon-guard against the rad↔deg / chooser feedback loop. The
+        // angle prop displays in degrees but stores in radians; the panel's
+        // rad→deg→2-decimal-display→deg→rad round-trip drifts the float by
+        // ~1e-4 rad each time the input commits (focus loss, panel rebuild,
+        // etc.), and re-firing ApplyValue on those drifts kept self-priming
+        // another rebuild. Only re-project if a value moved by more than the
+        // noise floor — 1e-4 rad ≈ 0.006°, well below any user-intended edit.
+        const float WHR_EPS = 1.0e-4f;
+        const bool  changed = wm &&
+            (_abs(wm->w - m_SnapW) > WHR_EPS ||
+             _abs(wm->h - m_SnapH) > WHR_EPS ||
+             _abs(wm->r - m_SnapR) > WHR_EPS ||
+             m_PendingShName != m_SnapShName ||
+             m_PendingTxName != m_SnapTxName);
+        if (changed)
+        {
+            RebuildWallmark(wm);
+            ExecCommand(COMMAND_UPDATE_PROPERTIES);
+        }
+    }
+}
 
 struct zero_slot_pred
 {
@@ -388,6 +432,11 @@ bool ESceneWallmarkTool::LoadStream(IReader& F)
 
     R_ASSERT(F.find_chunk(WM_CHUNK_FLAGS));
     F.r(&m_Flags, sizeof(m_Flags));
+    // Migration: the "Draw Wallmarks" UI toggle is gone (it duplicated the
+    // tool's own visibility checkbox in the LeftBar Tools list). Any save
+    // where the user had turned it off would otherwise render wallmarks
+    // blank with no UI to recover. Force the bit on.
+    m_Flags.set(flDrawWallmark, TRUE);
 
     R_ASSERT(F.find_chunk(WM_CHUNK_PARAMS));
     m_MarkWidth  = F.r_float();
@@ -854,7 +903,7 @@ int ESceneWallmarkTool::ObjectCount()
     return count;
 }
 
-BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvector& dir, shared_str sh, shared_str tx, float width, float height, float rotate, wallmark* exclude_from_similar, bool silent)
+BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvector& dir, shared_str sh, shared_str tx, float width, float height, float rotate, wallmark* exclude_from_similar, bool silent, bool ignore_use, ObjectList* override_list)
 {
     /*
     if (ObjectCount()>=MAX_WALLMARK_COUNT){
@@ -878,7 +927,7 @@ BOOL ESceneWallmarkTool::AddWallmark_internal(const Fvector& start, const Fvecto
     // pick contact poly
     Fvector     contact_pt;
     float       dist      = UI->ZFar();
-    ObjectList* snap_list = Scene->GetSnapList(false);
+    ObjectList* snap_list = override_list ? override_list : Scene->GetSnapList(ignore_use);
     if (!snap_list)
     {
         if (!silent)
@@ -1108,28 +1157,45 @@ BOOL ESceneWallmarkTool::MoveSelectedWallmarkTo(const Fvector& start, const Fvec
     return TRUE;
 }
 
-BOOL ESceneWallmarkTool::RebuildSelectedWallmark(const Fvector& new_world_pos, float new_r, float new_w, float new_h)
+BOOL ESceneWallmarkTool::RebuildWallmark(wallmark* wm)
 {
     if (!m_Flags.is(flDrawWallmark))
         return FALSE;
-
-    wallmark* wm = FindSingleSelectedWallmark();
     if (!wm)
         return FALSE;
 
-    // Same pattern as MoveSelectedWallmarkTo, but the ray comes from above the
-    // wallmark along its current normal — so the re-projection lands at
-    // `new_world_pos` regardless of camera angle. This is what makes the
-    // gizmo work cleanly: ImGuizmo doesn't care about the camera ray.
+    // Ray-from-above approach: cast back along the wallmark's surface normal
+    // so the re-projection lands at wm->bounds.P regardless of camera angle.
     const Fvector normal    = wm->compute_normal();
-    Fvector       ray_start = new_world_pos;
+    Fvector       ray_start = wm->bounds.P;
     ray_start.mad(normal, 0.25f);
     Fvector ray_dir = normal;
     ray_dir.invert();
 
-    shared_str sh = wm->parent->sh_name;
-    shared_str tx = wm->parent->tx_name;
-    if (!AddWallmark_internal(ray_start, ray_dir, sh, tx, new_w, new_h, new_r, wm, /*silent=*/true))
+    // Pin the re-projection to the wallmark's ORIGINAL host object. Without
+    // this, a re-project ray-picks against whatever's in the snap list right
+    // now — which is almost never what the user wants when tweaking an
+    // existing wallmark's size, rotation, shader, or texture. The host name
+    // is cached on the wallmark at placement time (or lazily resolved via
+    // EnsureHostObjectName below for wallmarks loaded from disk).
+    EnsureHostObjectName(wm);
+    ObjectList host_list;
+    if (wm->src_obj_name.size())
+    {
+        if (CCustomObject* host = Scene->FindObjectByName(wm->src_obj_name.c_str(), OBJCLASS_SCENEOBJECT))
+            host_list.push_back(host);
+    }
+
+    // Shader / Texture come from the scratch fields the panel choosers write
+    // to; on rebuild paths where the user didn't change them (e.g. width
+    // edit), they still mirror the wallmark's current slot values because
+    // FillPropObjects re-copies them on every refresh. Fall back to the
+    // wallmark's own slot if a non-panel caller (the gizmo) invoked us
+    // before the panel ran.
+    shared_str sh           = m_PendingShName.size() ? m_PendingShName : wm->parent->sh_name;
+    shared_str tx           = m_PendingTxName.size() ? m_PendingTxName : wm->parent->tx_name;
+    ObjectList* override_lst = host_list.empty() ? nullptr : &host_list;
+    if (!AddWallmark_internal(ray_start, ray_dir, sh, tx, wm->w, wm->h, wm->r, wm, /*silent=*/true, /*ignore_use=*/true, override_lst))
         return FALSE;
 
     {
@@ -1145,15 +1211,94 @@ BOOL ESceneWallmarkTool::RebuildSelectedWallmark(const Fvector& new_world_pos, f
     return TRUE;
 }
 
+BOOL ESceneWallmarkTool::RebuildSelectedWallmark(const Fvector& new_world_pos, float new_r, float new_w, float new_h)
+{
+    // Thin wrapper kept for the gizmo path. Writes the requested pose into
+    // the wallmark, then delegates to RebuildWallmark which already knows how
+    // to re-project from those fields.
+    wallmark* wm = FindSingleSelectedWallmark();
+    if (!wm)
+        return FALSE;
+    wm->bounds.P = new_world_pos;
+    wm->w        = new_w;
+    wm->h        = new_h;
+    wm->r        = new_r;
+    return RebuildWallmark(wm);
+}
+
+void ESceneWallmarkTool::FillToolDefaults(PropItemVec& items)
+{
+    // Defaults applied to the next placed wallmark. Rendered in the LeftBar
+    // by UIWallmarkTool — these used to live in FillPropObjects, but the
+    // Properties Panel now shows the actually-selected wallmark instead.
+    PHelper().CreateFlag32(items, "Alignment", &m_Flags, flAxisAlign, "By Camera", "By World Axis");
+    PHelper().CreateFloat(items, "Width", &m_MarkWidth, 0.01f, 10.f);
+    PHelper().CreateFloat(items, "Height", &m_MarkHeight, 0.01f, 10.f);
+    PHelper().CreateAngle(items, "Rotate", &m_MarkRotate);
+    PHelper().CreateChoose(items, "Shader", &m_ShName, smEShader);
+    PHelper().CreateChoose(items, "Texture", &m_TxName, smTexture);
+}
+
+void ESceneWallmarkTool::OnSelectedWMChanged(PropValue*)
+{
+    // ApplyValue has already written the new value through the PropValue's
+    // raw pointer into wm->w / wm->h / wm->r (or, for Shader / Texture, the
+    // tool's scratch shared_strs). We defer the actual re-project to OnFrame
+    // so we're outside ApplyValue's iteration when the old wallmark gets
+    // freed and replaced.
+    m_PendingRebuild = FindSingleSelectedWallmark();
+}
+
 void ESceneWallmarkTool::FillPropObjects(LPCSTR pref, PropItemVec& items)
 {
-    PHelper().CreateFlag32(items, PrepareKey(pref, "Common\\Draw Wallmarks"), &m_Flags, flDrawWallmark);
-    PHelper().CreateFlag32(items, PrepareKey(pref, "Common\\Alignment"), &m_Flags, flAxisAlign, "By Camera", "By World Axis");
-    PHelper().CreateFloat(items, PrepareKey(pref, "Common\\Width"), &m_MarkWidth, 0.01f, 10.f);
-    PHelper().CreateFloat(items, PrepareKey(pref, "Common\\Height"), &m_MarkHeight, 0.01f, 10.f);
-    PHelper().CreateAngle(items, PrepareKey(pref, "Common\\Rotate"), &m_MarkRotate);
-    PHelper().CreateChoose(items, PrepareKey(pref, "Common\\Shader"), &m_ShName, smEShader);
-    PHelper().CreateChoose(items, PrepareKey(pref, "Common\\Texture"), &m_TxName, smTexture);
+    const int sel = SelectionCount(true);
+    if (sel == 0)
+    {
+        PHelper().CreateCaption(items, PrepareKey(pref, "Wallmark"), "No wallmark selected");
+        return;
+    }
+    if (sel > 1)
+    {
+        string128 buf;
+        sprintf(buf, "%d wallmarks selected - pick one to edit", sel);
+        PHelper().CreateCaption(items, PrepareKey(pref, "Wallmark"), buf);
+        return;
+    }
+
+    wallmark* w = FindSingleSelectedWallmark();
+    if (!w)
+        return;
+
+    // Seed the per-selection scratch fields from the wallmark's current slot.
+    // RebuildWallmark reads them on every re-project; for w/h/r edits they
+    // pass through unchanged, and for Shader/Texture edits the chooser
+    // writes the new value here before OnChange fires.
+    m_PendingShName = w->parent->sh_name;
+    m_PendingTxName = w->parent->tx_name;
+    // Snapshot for the OnFrame change-detection guard.
+    m_SnapW         = w->w;
+    m_SnapH         = w->h;
+    m_SnapR         = w->r;
+    m_SnapShName    = m_PendingShName;
+    m_SnapTxName    = m_PendingTxName;
+
+    // Per-instance editable properties. OnChange triggers a deferred rebuild
+    // (see OnFrame) which re-projects the wallmark to match the new size,
+    // rotation, shader, or texture. The PropValue pointers target wm-> /
+    // m_Pending* fields which stay valid until the next ApplyValue
+    // iteration finishes — OnSelectedWMChanged is careful to only stash
+    // the wallmark, not free it here.
+    PropValue* V;
+    V = PHelper().CreateFloat(items, PrepareKey(pref, "Width"), &w->w, 0.01f, 10.f);
+    V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMChanged);
+    V = PHelper().CreateFloat(items, PrepareKey(pref, "Height"), &w->h, 0.01f, 10.f);
+    V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMChanged);
+    V = PHelper().CreateAngle(items, PrepareKey(pref, "Rotate"), &w->r);
+    V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMChanged);
+    V = PHelper().CreateChoose(items, PrepareKey(pref, "Shader"), &m_PendingShName, smEShader);
+    V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMChanged);
+    V = PHelper().CreateChoose(items, PrepareKey(pref, "Texture"), &m_PendingTxName, smTexture);
+    V->OnChangeEvent.bind(this, &ESceneWallmarkTool::OnSelectedWMChanged);
 }
 
 bool ESceneWallmarkTool::Validate(bool)
@@ -1234,6 +1379,9 @@ void ESceneWallmarkTool::CreateControls()
     // node tools
     AddControl(xr_new<TUI_ControlWallmarkAdd>(0, etaAdd, this));
     AddControl(xr_new<TUI_ControlWallmarkMove>(0, etaMove, this));
+    // LeftBar form: hosts the "Next Placement" defaults.
+    pForm                          = xr_new<UIWallmarkTool>();
+    ((UIWallmarkTool*)pForm)->Tool = this;
 }
 
 void ESceneWallmarkTool::RemoveControls()

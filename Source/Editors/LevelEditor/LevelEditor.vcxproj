@@ -149,6 +149,7 @@
     <ClCompile Include="UI\Tools\UISectorTool.cpp" />
     <ClCompile Include="UI\Tools\UIShapeTool.cpp" />
     <ClCompile Include="UI\Tools\UISpawnTool.cpp" />
+    <ClCompile Include="UI\Tools\UIWallmarkTool.cpp" />
     <ClCompile Include="UI\Tools\UIWayTool.cpp" />
     <ClCompile Include="UI\UIDOOneColor.cpp" />
     <ClCompile Include="UI\UIDOShuffle.cpp" />
@@ -296,6 +297,7 @@
     <ClInclude Include="UI\Tools\UIShapeTool.h" />
     <ClInclude Include="UI\Tools\UISpawnTool.h" />
     <ClInclude Include="UI\Tools\UIToolCustom.h" />
+    <ClInclude Include="UI\Tools\UIWallmarkTool.h" />
     <ClInclude Include="UI\Tools\UIWayTool.h" />
     <ClInclude Include="UI\UIDOOneColor.h" />
     <ClInclude Include="UI\UIDOShuffle.h" />

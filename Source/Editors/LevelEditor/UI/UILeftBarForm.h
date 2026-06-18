@@ -23,7 +23,13 @@ public:
     }
 
 private:
-    bool m_UseSnapList;
-    bool m_SnapListMode;
-    int  m_SnapItem_Current;
+    bool       m_UseSnapList;
+    bool       m_SnapListMode;
+    int        m_SnapItem_Current;
+    // Last-seen active tool target. The Snap List section auto-opens when
+    // the user switches *into* the Wallmark tool (since wallmarks need a
+    // populated snap list to stick to anything); tracking the previous
+    // target lets us trigger that exactly once per tool switch and leave
+    // the user's later collapse/expand alone.
+    ObjClassID m_LastSeenTarget;
 };

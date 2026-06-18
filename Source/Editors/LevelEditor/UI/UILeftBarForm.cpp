@@ -5,6 +5,7 @@ UILeftBarForm::UILeftBarForm()
     m_UseSnapList      = false;
     m_SnapListMode     = false;
     m_SnapItem_Current = 0;
+    m_LastSeenTarget   = OBJCLASS_DUMMY;
 }
 
 UILeftBarForm::~UILeftBarForm() {}
@@ -78,6 +79,18 @@ void UILeftBarForm::Draw()
     if (ImGui::IsItemHovered())
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     // ------------------------------------------------------------------------------------------------------ //
+    // Auto-open the Snap List the moment the user switches into the Wallmark
+    // tool — wallmarks can't be placed without a populated snap list, and
+    // forgetting to expand the dropdown is the most common stumbling block.
+    // We only force-open on the transition (not every frame the wallmark
+    // tool is active) so subsequent manual collapses by the user stick.
+    const ObjClassID cur_target = LTools->GetTarget();
+    if (cur_target != m_LastSeenTarget)
+    {
+        if (cur_target == OBJCLASS_WM)
+            ImGui::SetNextItemOpen(true);
+        m_LastSeenTarget = cur_target;
+    }
     if (ImGui::CollapsingHeader(("  Snap List"_RU >> u8"  Список привязанных объектов"), ImGuiTreeNodeFlags_FramePadding | ImGuiTableFlags_NoBordersInBody))
     {
         if (ImGui::IsItemHovered())
