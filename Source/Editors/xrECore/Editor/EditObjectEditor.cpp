@@ -34,7 +34,17 @@ static FVF::LIT LOD[4]     = {
 bool CEditableObject::Reload()
 {
     ClearGeometry();
-    return Load(m_LoadName.c_str());
+    const bool ok = Load(m_LoadName.c_str());
+    // Re-prewarm so the post-reload state mirrors a fresh first-load:
+    // resolves the newly-loaded surfaces' shader handles and narrows
+    // m_combo_mask back from the 0xFF DefferedUnloadRP fallback. Without
+    // this, the reloaded ref draws fine (lazy resolution kicks in on the
+    // first render) but downstream scene-object copies still point at the
+    // OLD surfaces' shader handles, and any frustum/transform state that
+    // sampled the in-between window stays stale.
+    if (ok)
+        PrewarmRP();
+    return ok;
 }
 
 bool CEditableObject::RayPick(float& dist, const Fvector& S, const Fvector& D, const Fmatrix& inv_parent, SRayPickInfo* pinf)

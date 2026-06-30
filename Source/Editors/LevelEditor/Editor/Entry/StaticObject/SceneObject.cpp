@@ -1,4 +1,5 @@
 ﻿#include "stdafx.h"
+#include "../../../../xrECore/Editor/MeshPrefetcher.h"
 
 #define BLINK_TIME 300.f
 
@@ -258,7 +259,13 @@ CEditableObject* CSceneObject::UpdateReference()
     m_Surfaces.clear();
     Lib.RemoveEditObject(m_pReference);
     m_pReference = (m_ReferenceName.size()) ? Lib.CreateEditObject(*m_ReferenceName) : 0;
-    UpdateTransform();
+    // Force-recompute m_TBBox now (instead of flagging for the next OnFrame).
+    // The new reference's bbox can differ from the old one, and the in-between
+    // frame's renderer reads m_TBBox via GetBox — a stale value drives the
+    // frustum / tiny-cull / IsRender paths to wrongly skip the object until
+    // OnFrame finally consumes the flag (or until a selection forces it
+    // through via flRenderAnyWayIfSelected).
+    UpdateTransform(true);
     if (m_pReference)
     {
         for (size_t i = 0; i < m_pReference->SurfaceCount(); i++)
@@ -268,6 +275,20 @@ CEditableObject* CSceneObject::UpdateReference()
             m_Surfaces.push_back(surf);
             if (surf->IsVoid())
                 surf->OnDeviceCreate();
+        }
+        // Hand the reference's meshes to the background mesh prefetcher so
+        // they get their D3D9 vertex buffers built. Without this, the render
+        // path's skip-on-missing branch (CEditableMesh::Render returns when
+        // m_RenderBuffers == 0) silently drops the draw and the object
+        // visually disappears.
+        //
+        // CommandLoad does the same enqueue at scene-load time in distance-
+        // sorted order; this covers the reference-change and library-reload
+        // paths where CommandLoad doesn't fire.
+        if (g_MeshPrefetch)
+        {
+            for (CEditableMesh* m: m_pReference->Meshes())
+                g_MeshPrefetch->Enqueue(m);
         }
     }
     return m_pReference;

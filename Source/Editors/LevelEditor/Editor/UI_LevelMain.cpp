@@ -568,6 +568,26 @@ CCommandVar CommandCleanLibrary(CCommandVar p1, CCommandVar p2)
 CCommandVar CommandReloadObjects(CCommandVar p1, CCommandVar p2)
 {
     Lib.ReloadObjects();
+    // Each CSceneObject keeps its own copy of the reference's surfaces (made
+    // via CSurface::CopyFrom at placement / reference-change time). After
+    // Lib.ReloadObjects re-reads every .object from disk, those per-instance
+    // copies still hold shader handles tied to the OLD library data — the
+    // scene object draws using the stale handles and any frustum / IsRender
+    // path that read its bbox before the next OnFrame trip sees stale state
+    // too, so the object visually disappears until the user clicks to select
+    // it (which short-circuits IsRender via flRenderAnyWayIfSelected).
+    //
+    // UpdateReference rebuilds m_Surfaces from the freshly-loaded reference
+    // and forces UpdateTransform — exactly the post-reload sync we need.
+    if (ESceneCustomOTool* ot = dynamic_cast<ESceneCustomOTool*>(Scene->GetTool(OBJCLASS_SCENEOBJECT)))
+    {
+        for (CCustomObject* obj: ot->GetObjects())
+        {
+            if (CSceneObject* so = dynamic_cast<CSceneObject*>(obj))
+                so->UpdateReference();
+        }
+    }
+    UI->UpdateScene();
     return TRUE;
 }
 
