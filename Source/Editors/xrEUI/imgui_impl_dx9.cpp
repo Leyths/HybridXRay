@@ -69,6 +69,14 @@ static void ImGui_ImplDX9_SetupRenderState(ImDrawData* draw_data)
     g_pd3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
     g_pd3dDevice->SetRenderState(D3DRS_SHADEMODE, D3DSHADE_GOURAUD);
     g_pd3dDevice->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    // Reset stage-0 TEXCOORDINDEX to the default (use texcoord set 0,
+    // pass-through). The editor's scene-render path leaves this with a
+    // D3DTSS_TCI_CAMERASPACE* flag in some material state blocks, which
+    // makes the FFP synthesise UVs from camera-space normal/position
+    // instead of the vertex's own UV when ImGui later draws — and that
+    // smears the entire UI into the top-left of the screen. ImGui's prior
+    // setup explicitly set every TSS it cared about *except* this one.
+    g_pd3dDevice->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
     g_pd3dDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
     g_pd3dDevice->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
     g_pd3dDevice->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
