@@ -284,6 +284,27 @@ void CEditableMesh::GenerateVNormals(bool force, bool silent, bool only_one_msg)
             }
         }
     }
+    // Defensive sweep: any vertex normal that ended up zero (degenerate
+    // triangle, fallback to a zero face normal, all-coincident verts, etc.)
+    // gets a synthetic +Y so downstream shaders that do normalize(N) can't
+    // produce a NaN. NaN positions out of a vertex shader collapse to (0,0)
+    // in clip space and smear every following draw into the top-left.
+    if (m_VertexNormals)
+    {
+        const u32 nn       = m_FaceCount * 3;
+        u32       fixed    = 0;
+        for (u32 i = 0; i < nn; i++)
+        {
+            Fvector& N = m_VertexNormals[i];
+            if (N.x == 0.f && N.y == 0.f && N.z == 0.f)
+            {
+                N.set(0, 1, 0);
+                ++fixed;
+            }
+        }
+        if (fixed && !silent && g_extendedLog)
+            Msg("! ..GenerateVNormals: replaced %u zero-length normals with +Y on '%s'", fixed, m_Parent ? m_Parent->GetName() : "?");
+    }
     UnloadFNormals();
     UnloadAdjacency();
 }

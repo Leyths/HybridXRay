@@ -8,6 +8,8 @@
 #include "EditMesh.h"
 #include "EditObject.h"
 
+extern ECORE_API BOOL g_extendedLog;
+
 #define EMESH_CURRENT_VERSION  0x0011
 //----------------------------------------------------
 #define EMESH_CHUNK_VERSION    0x1000
@@ -158,6 +160,25 @@ bool CEditableMesh::LoadMesh(IReader& F)
         {
             m_Normals = xr_alloc<Fvector>(m_FaceCount * 3);
             F.r(m_Normals, m_FaceCount * 3 * sizeof(Fvector));
+            // Defensive: source-normal chunk straight from disk can contain
+            // (0,0,0) entries when a Blender export produced degenerate
+            // triangles. A zero normal fed to normalize() in a vertex shader
+            // returns NaN, which collapses gl_Position and smears the entire
+            // frame into the top-left corner. Replace with +Y as a benign
+            // default; the geometry already had no usable normal there.
+            const u32 nn = m_FaceCount * 3;
+            u32       fixed = 0;
+            for (u32 i = 0; i < nn; i++)
+            {
+                Fvector& N = m_Normals[i];
+                if (N.x == 0.f && N.y == 0.f && N.z == 0.f)
+                {
+                    N.set(0, 1, 0);
+                    ++fixed;
+                }
+            }
+            if (fixed && g_extendedLog)
+                Msg("! ..Loaded m_Normals: replaced %u zero-length entries with +Y", fixed);
         }
         else
             Msg("! ..Normals chunk size == %d. Needed size == %d", normal_chunk_size, m_FaceCount * 3 * sizeof(Fvector));
