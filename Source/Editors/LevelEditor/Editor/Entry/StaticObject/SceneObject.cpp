@@ -1,6 +1,23 @@
 ﻿#include "stdafx.h"
 #include "../../../../xrECore/Editor/MeshPrefetcher.h"
 
+namespace
+{
+// Singular = the upper-left 3x3 has a determinant near zero, i.e. the
+// transform collapses geometry into a degenerate subspace (a sub-pixel
+// speck). Skipping the draw avoids parking such a transform in RCache, which
+// later draws (including ImGui's UI pass) could otherwise inherit. We've
+// seen instances saved with i=j=k≈(1e-5, 0, 0) which give det ≈ 1e-15.
+inline bool xform_is_singular(const Fmatrix& m)
+{
+    const float det =
+        m.i.x * (m.j.y * m.k.z - m.j.z * m.k.y) -
+        m.i.y * (m.j.x * m.k.z - m.j.z * m.k.x) +
+        m.i.z * (m.j.x * m.k.y - m.j.y * m.k.x);
+    return _abs(det) < 1.0e-10f;
+}
+}    // namespace
+
 #define BLINK_TIME 300.f
 
 CSceneObject::CSceneObject(LPVOID data, LPCSTR name): CCustomObject(data, name)
@@ -112,6 +129,13 @@ void CSceneObject::Render(int priority, bool strictB2F)
 #ifdef _LEVEL_EDITOR
         Scene->SelectLightsForObject(this);
 #endif
+        // Skip the draw if this instance ended up with a singular world
+        // matrix — usually a saved scale of ~1e-5 from a misbehaving editor
+        // tool. The geometry would collapse into a sub-pixel point anyway,
+        // but rendering it parks a near-zero world matrix in RCache that
+        // later draws can pick up.
+        if (xform_is_singular(_Transform()))
+            return;
         m_pReference->Render(_Transform(), priority, strictB2F, &m_Surfaces);
     }
     if (Selected())
