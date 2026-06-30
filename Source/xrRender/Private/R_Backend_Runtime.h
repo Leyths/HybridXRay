@@ -111,7 +111,15 @@ IC void CBackend::set_Matrices(SMatrixList* _M)
         M = _M;
         if (M)
         {
-            for (u32 it = 0; it < M->size(); it++)
+            // matrices[] is declared as CMatrix*[8]. D3D9 only supports
+            // D3DTS_TEXTURE0..TEXTURE7 (8 slots). When a shader registers
+            // more than 8 matrices (some lighting / mtl shaders do), the
+            // original loop wrote past matrices[7], stomping whatever struct
+            // members followed (stats, render-state cache pointers, etc.)
+            // and producing seemingly-unrelated rendering corruption. Cap
+            // the iteration at the supported slot count.
+            const u32 sz = M->size() < 8 ? (u32)M->size() : 8u;
+            for (u32 it = 0; it < sz; it++)
             {
                 CMatrix* mat = &*((*M)[it]);
                 if (mat && matrices[it] != mat)
