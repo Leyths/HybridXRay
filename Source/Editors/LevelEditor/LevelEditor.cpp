@@ -10,6 +10,56 @@
 #include "../xrEngine/x_ray.h"
 #include "Engine/XRayEditor.h"
 #include "resources/splash.h"
+#include <shellapi.h>
+
+// Returns the value of the -level <path> CLI argument, or an empty string if
+// absent. Allows scripted launches that auto-load a specific .level file, e.g.
+//   LevelEditor.exe -nosplash -level "C:\path with spaces\08 - rostock bar.level"
+// CommandLineToArgvW handles quoted paths with spaces.
+static xr_string parse_level_arg()
+{
+    int    argc = 0;
+    LPWSTR cmdLine = GetCommandLineW();
+    LPWSTR* argv = ::CommandLineToArgvW(cmdLine, &argc);
+    xr_string out;
+    if (!argv)
+        return out;
+    for (int i = 1; i + 1 < argc; ++i)
+    {
+        if (_wcsicmp(argv[i], L"-level") == 0)
+        {
+            char buf[MAX_PATH * 2] = {0};
+            ::WideCharToMultiByte(CP_ACP, 0, argv[i + 1], -1, buf, sizeof(buf), NULL, NULL);
+            out = buf;
+            break;
+        }
+    }
+    ::LocalFree(argv);
+    return out;
+}
+
+// -autoexit N: after auto-load completes, count N more Frame() iterations
+// then break out of the main loop. Used for autonomous debug cycles where we
+// want the editor to render-and-exit on its own so the log is finalised.
+static int parse_autoexit_arg()
+{
+    int     argc = 0;
+    LPWSTR  cmdLine = GetCommandLineW();
+    LPWSTR* argv = ::CommandLineToArgvW(cmdLine, &argc);
+    int     out = 0;
+    if (!argv)
+        return out;
+    for (int i = 1; i + 1 < argc; ++i)
+    {
+        if (_wcsicmp(argv[i], L"-autoexit") == 0)
+        {
+            out = _wtoi(argv[i + 1]);
+            break;
+        }
+    }
+    ::LocalFree(argv);
+    return out;
+}
 
 XREPROPS_API extern bool bIsActorEditor;
 ECORE_API extern bool    bIsLevelEditor;
@@ -87,8 +137,31 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
     // progress regardless of activation state.
     splash::hide();
 
+    const xr_string auto_load_level   = parse_level_arg();
+    bool            auto_load_pending = !auto_load_level.empty();
+    const int       auto_exit_frames  = parse_autoexit_arg();
+    int             frames_since_load = 0;
     while (MainForm->Frame())
-    {}
+    {
+        if (auto_load_pending)
+        {
+            auto_load_pending = false;
+            Msg("- LevelEditor: auto-loading level via -level: '%s'", auto_load_level.c_str());
+            FlushLog();
+            ExecCommand(COMMAND_LOAD, auto_load_level);
+            frames_since_load = 0;
+        }
+        else if (auto_exit_frames > 0 && auto_load_level.size())
+        {
+            ++frames_since_load;
+            if (frames_since_load >= auto_exit_frames)
+            {
+                Msg("- LevelEditor: auto-exit after %d post-load frames", frames_since_load);
+                FlushLog();
+                break;
+            }
+        }
+    }
 
     xr_delete(MainForm);
     xr_delete(pApp);
