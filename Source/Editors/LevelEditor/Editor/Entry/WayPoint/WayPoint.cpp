@@ -893,6 +893,54 @@ bool CWayObject::LoadStream(IReader& F)
     return true;
 }
 
+bool CWayObject::LoadFromLevelGame(IReader& F)
+{
+    // Construct() populates m_WayPoints with one default point; Clear()
+    // frees the pointer but by design leaves the vector's size unchanged
+    // (LoadStream relies on that + m_WayPoints.resize() overwriting it).
+    // We rebuild from empty, so drop the residual entry outright.
+    Clear();
+    m_WayPoints.clear();
+
+    // The compiled level.game per-point layout differs from LoadStream in
+    // that there is no m_bSelected field between flags and name. Everything
+    // else is the same, so we can populate m_WayPoints / m_Links in place.
+    if (!F.find_chunk(WAYOBJECT_CHUNK_POINTS))
+        return false;
+
+    u32 point_count = F.r_u16();
+    m_WayPoints.reserve(point_count);
+    shared_str name_buf;
+    for (u32 i = 0; i < point_count; ++i)
+    {
+        CWayPoint* W = xr_new<CWayPoint>("");
+        F.r_fvector3(W->m_vPosition);
+        W->m_Flags.assign(F.r_u32());
+        F.r_stringZ(name_buf);
+        W->m_Name = name_buf;
+        m_WayPoints.push_back(W);
+    }
+
+    if (!F.find_chunk(WAYOBJECT_CHUNK_LINKS))
+        return false;
+
+    u32 link_count = F.r_u16();
+    for (u32 i = 0; i < link_count; ++i)
+    {
+        u16   from = F.r_u16();
+        u16   to   = F.r_u16();
+        float pb   = F.r_float();
+        if (from >= m_WayPoints.size() || to >= m_WayPoints.size())
+            return false;
+        m_WayPoints[from]->CreateLink(m_WayPoints[to], pb);
+    }
+
+    m_Type             = wtPatrolPath;
+    m_HasColorOverride = FALSE;
+    m_ColorOverride.set(1.0f, 1.0f, 1.0f, 1.0f);
+    return !m_WayPoints.empty();
+}
+
 void CWayObject::SaveStream(IWriter& F)
 {
     CCustomObject::SaveStream(F);

@@ -23,6 +23,11 @@ enum
     COMMAND_IMPORT_COMPILER_ERROR,
     COMMAND_IMPORT_AICOMPILER_ERROR,
     COMMAND_EXPORT_COMPILER_ERROR,
+    // Import objects from the compiled per-level binary files. Reads
+    // level.spawn (M_SPAWN packets) or level.game (patrol paths) and adds
+    // the contents into the current scene under a timestamped folder.
+    COMMAND_IMPORT_LEVEL_SPAWN,
+    COMMAND_IMPORT_LEVEL_GAME,
     COMMAND_VALIDATE_SCENE,
     COMMAND_RELOAD_OBJECTS,
 

@@ -49,6 +49,25 @@ void UIMainMenuForm::Draw()
             if (ImGui::IsItemHovered())
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::Separator();
+            if (ImGui::BeginMenu("Import"_RU >> u8"Импорт", ""))
+            {
+                if (ImGui::MenuItem("Spawn Entities (.spawn)..."_RU >> u8"Спавн-объекты (.spawn)...", ""))
+                {
+                    ExecCommand(COMMAND_IMPORT_LEVEL_SPAWN);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::MenuItem("Patrol Paths (.game)..."_RU >> u8"Пути патрулирования (.game)...", ""))
+                {
+                    ExecCommand(COMMAND_IMPORT_LEVEL_GAME);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::EndMenu();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::Separator();
             if (ImGui::BeginMenu("Open Recent"_RU >> u8"Открыть последние", ""))
             {
                 for (auto& str: EPrefs->scene_recent_list)

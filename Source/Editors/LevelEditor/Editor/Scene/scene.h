@@ -228,6 +228,39 @@ public:
     BOOL                                                      UnloadLevelPart(ESceneToolBase* M);
     BOOL                                                      UnloadLevelPart(LPCSTR map_name, ObjClassID cls);
 
+    // Summary of a single Import* invocation.
+    //  * skipped_name     — an entity with this name already exists.
+    //  * skipped_coord    — a same-section graph_point already exists within
+    //                       GRAPH_POINT_RADIUS metres. Only applies to
+    //                       graph_point since its identity is (type, xyz);
+    //                       named entities are trusted to be unique by name.
+    //  * skipped_excluded — section is on the compiler-artifact deny-list
+    //                       (breakable_object, climable_object). These are
+    //                       auto-generated from level geometry and add no
+    //                       editable value if imported back into the scene.
+    //  * errors           — malformed packet, missing chunk, or entity whose
+    //                       section is unknown in the current game's configs.
+    struct ImportStats
+    {
+        int imported;
+        int skipped_name;
+        int skipped_coord;
+        int skipped_excluded;
+        int errors;
+        ImportStats(): imported(0), skipped_name(0), skipped_coord(0), skipped_excluded(0), errors(0) {}
+    };
+
+    // Read compiled per-level binary files and drop their contents into the
+    // current scene. Both routines create a timestamped CFolderObject that
+    // contains only the newly-imported items (existing scene objects are
+    // never modified). Dedup rules:
+    //  * skip if an entity with this name already exists (any class);
+    //  * additionally, for graph_point only, skip if a graph_point already
+    //    exists at the same position;
+    //  * excluded sections (breakable_object, climable_object) never enter.
+    bool ImportLevelSpawn(LPCSTR path, ImportStats& stats);
+    bool ImportLevelGame(LPCSTR path, ImportStats& stats);
+
 public:
     bool    ExportGame(SExportStreams* F);
 

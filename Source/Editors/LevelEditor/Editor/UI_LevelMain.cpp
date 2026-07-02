@@ -537,6 +537,49 @@ CCommandVar CommandExportCompilerError(CCommandVar p1, CCommandVar p2)
     return TRUE;
 }
 
+// Modal summary shown to the user after a menu-triggered import completes.
+// Emitted here rather than inside Scene::Import* so scripted CLI callers can
+// run headless without a dialog blocking the main loop.
+static void CommandShowImportSummary(const EScene::ImportStats& stats)
+{
+    ELog.DlgMsg(mtInformation,
+        "Import complete\n\n"
+        "Imported: %d\n"
+        "Skipped by name: %d\n"
+        "Skipped by coordinate (graph_point overlap): %d\n"
+        "Skipped as compiler-generated (meshes / climable): %d\n"
+        "Errors: %d",
+        stats.imported, stats.skipped_name, stats.skipped_coord, stats.skipped_excluded, stats.errors);
+}
+
+CCommandVar CommandImportLevelSpawn(CCommandVar p1, CCommandVar p2)
+{
+    if (Scene->locked())
+        return FALSE;
+    xr_string fn = p1.IsString() ? xr_string(p1) : xr_string();
+    if (fn.empty() && !EFS.GetOpenName(EDevice->m_hWnd, "$game_levels$", fn, false, NULL, 0))
+        return FALSE;
+    EScene::ImportStats stats;
+    if (Scene->ImportLevelSpawn(fn.c_str(), stats))
+        CommandShowImportSummary(stats);
+    UI->RedrawScene();
+    return TRUE;
+}
+
+CCommandVar CommandImportLevelGame(CCommandVar p1, CCommandVar p2)
+{
+    if (Scene->locked())
+        return FALSE;
+    xr_string fn = p1.IsString() ? xr_string(p1) : xr_string();
+    if (fn.empty() && !EFS.GetOpenName(EDevice->m_hWnd, "$game_levels$", fn, false, NULL, 0))
+        return FALSE;
+    EScene::ImportStats stats;
+    if (Scene->ImportLevelGame(fn.c_str(), stats))
+        CommandShowImportSummary(stats);
+    UI->RedrawScene();
+    return TRUE;
+}
+
 CCommandVar CommandValidateScene(CCommandVar p1, CCommandVar p2)
 {
     if (!Scene->locked())
@@ -1218,6 +1261,8 @@ void CLevelMain::RegisterCommands()
     REGISTER_CMD_S(COMMAND_IMPORT_COMPILER_ERROR, CommandImportCompilerError);
     REGISTER_CMD_S(COMMAND_IMPORT_AICOMPILER_ERROR, CommandImportXrAICompilerError);
     REGISTER_CMD_S(COMMAND_EXPORT_COMPILER_ERROR, CommandExportCompilerError);
+    REGISTER_CMD_S(COMMAND_IMPORT_LEVEL_SPAWN, CommandImportLevelSpawn);
+    REGISTER_CMD_S(COMMAND_IMPORT_LEVEL_GAME, CommandImportLevelGame);
     REGISTER_CMD_S(COMMAND_VALIDATE_SCENE, CommandValidateScene);
     REGISTER_CMD_S(COMMAND_CLEAN_LIBRARY, CommandCleanLibrary);
     REGISTER_CMD_S(COMMAND_RELOAD_OBJECTS, CommandReloadObjects);

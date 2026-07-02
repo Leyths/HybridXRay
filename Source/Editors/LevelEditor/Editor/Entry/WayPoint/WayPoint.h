@@ -143,6 +143,14 @@ public:
     virtual void           SaveStream(IWriter&);
     virtual void           SaveLTX(CInifile& ini, LPCSTR sect_name);
 
+    // Populate this way object from a compiled level.game patrol sub-chunk.
+    // Reads WAYOBJECT_CHUNK_POINTS (per point: vec3 pos, u32 flags, stringZ
+    // name) and WAYOBJECT_CHUNK_LINKS (per edge: u16 from, u16 to, float
+    // probability). The name and version chunks are expected to have already
+    // been consumed by the caller. Returns false if either chunk is missing
+    // or claims a count that overflows the reader.
+    bool                   LoadFromLevelGame(IReader& sub_chunk);
+
     virtual bool           ExportGame(SExportStreams* data);
 
     virtual void           FillProp(LPCSTR pref, PropItemVec& items);

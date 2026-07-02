@@ -52,6 +52,7 @@
     <ClCompile Include="Editor\Scene\CFromBuilder.cpp" />
     <ClCompile Include="Editor\Scene\LEPhysics.cpp" />
     <ClCompile Include="Editor\Scene\scene.cpp" />
+    <ClCompile Include="Editor\Scene\SceneImport.cpp" />
     <ClCompile Include="Editor\Scene\SceneIO.cpp" />
     <ClCompile Include="Editor\Scene\ScenePick.cpp" />
     <ClCompile Include="Editor\Scene\SceneRender.cpp" />

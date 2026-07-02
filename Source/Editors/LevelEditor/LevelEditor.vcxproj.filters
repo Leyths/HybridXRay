@@ -431,6 +431,9 @@
     <ClCompile Include="Editor\Scene\Scene_Tools.cpp">
       <Filter>Editor\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="Editor\Scene\SceneImport.cpp">
+      <Filter>Editor\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="Editor\Scene\SceneIO.cpp">
       <Filter>Editor\Scene</Filter>
     </ClCompile>
