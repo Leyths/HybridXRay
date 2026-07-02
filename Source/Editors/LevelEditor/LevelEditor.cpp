@@ -61,6 +61,29 @@ static int parse_autoexit_arg()
     return out;
 }
 
+// Generic single-string CLI arg extractor used by the -import-* switches.
+static xr_string parse_string_arg(LPCWSTR flag)
+{
+    int     argc = 0;
+    LPWSTR  cmdLine = GetCommandLineW();
+    LPWSTR* argv = ::CommandLineToArgvW(cmdLine, &argc);
+    xr_string out;
+    if (!argv)
+        return out;
+    for (int i = 1; i + 1 < argc; ++i)
+    {
+        if (_wcsicmp(argv[i], flag) == 0)
+        {
+            char buf[MAX_PATH * 2] = {0};
+            ::WideCharToMultiByte(CP_ACP, 0, argv[i + 1], -1, buf, sizeof(buf), NULL, NULL);
+            out = buf;
+            break;
+        }
+    }
+    ::LocalFree(argv);
+    return out;
+}
+
 XREPROPS_API extern bool bIsActorEditor;
 ECORE_API extern bool    bIsLevelEditor;
 ECORE_API extern bool    bIsParticleEditor;
@@ -140,6 +163,14 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
     const xr_string auto_load_level   = parse_level_arg();
     bool            auto_load_pending = !auto_load_level.empty();
     const int       auto_exit_frames  = parse_autoexit_arg();
+    // -import-spawn / -import-game: fire the same commands the File menu
+    // wires up, but scripted so we can smoke-test the import path end-to-end
+    // without any UI interaction. Runs one frame after the auto-load so the
+    // scene is fully populated before the dedup pass compares against it.
+    const xr_string auto_import_spawn = parse_string_arg(L"-import-spawn");
+    const xr_string auto_import_game  = parse_string_arg(L"-import-game");
+    bool            import_spawn_pending = !auto_import_spawn.empty();
+    bool            import_game_pending  = !auto_import_game.empty();
     int             frames_since_load = 0;
     while (MainForm->Frame())
     {
@@ -151,10 +182,33 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
             ExecCommand(COMMAND_LOAD, auto_load_level);
             frames_since_load = 0;
         }
-        else if (auto_exit_frames > 0 && auto_load_level.size())
+        else if (auto_load_level.size())
         {
             ++frames_since_load;
-            if (frames_since_load >= auto_exit_frames)
+            // Give the scene one frame to settle after load before firing imports.
+            if (frames_since_load == 1)
+            {
+                // Call the Scene method directly rather than via ExecCommand
+                // so the command handler's modal summary dialog doesn't block
+                // the main loop before -autoexit can fire.
+                if (import_spawn_pending)
+                {
+                    import_spawn_pending = false;
+                    Msg("- LevelEditor: auto-import via -import-spawn: '%s'", auto_import_spawn.c_str());
+                    FlushLog();
+                    EScene::ImportStats stats;
+                    Scene->ImportLevelSpawn(auto_import_spawn.c_str(), stats);
+                }
+                if (import_game_pending)
+                {
+                    import_game_pending = false;
+                    Msg("- LevelEditor: auto-import via -import-game: '%s'", auto_import_game.c_str());
+                    FlushLog();
+                    EScene::ImportStats stats;
+                    Scene->ImportLevelGame(auto_import_game.c_str(), stats);
+                }
+            }
+            if (auto_exit_frames > 0 && frames_since_load >= auto_exit_frames)
             {
                 Msg("- LevelEditor: auto-exit after %d post-load frames", frames_since_load);
                 FlushLog();
