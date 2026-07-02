@@ -3,6 +3,7 @@
 #include "../Entry/Spawn/SpawnPoint.h"
 #include "../Entry/WayPoint/WayPoint.h"
 #include "../Entry/Folder/FolderObject.h"
+#include "../Entry/Shape/EShape.h"
 #include "../../../../xrEngine/LevelGameDef.h"
 #include "../../../../xrEngine/xrISEAbstract.h"
 #include "../../../../xrServerEntities/xrServer_Object_Base.h"
@@ -171,6 +172,34 @@ bool EScene::ImportLevelSpawn(LPCSTR path, ImportStats& stats)
         // call through the CCustomObject base where they are public.
         static_cast<CCustomObject*>(sp)->SetPosition(pos);
         static_cast<CCustomObject*>(sp)->SetRotation(ang);
+
+        // Shape-bearing entities (space_restrictor, level_changer, smart_terrain,
+        // campfire, torrid_zone, ...) carry their cform inside the packet.
+        // Spawn_Read populated m_Data->shape()->shapes; we mirror that into a
+        // CEditShape and attach it so the volume is visible in the editor.
+        // Without this the spawn point would show only as a point marker,
+        // which is what the user reported as "missing associated shapes".
+        ISE_Shape* cform = sp->m_SpawnData.m_Data->shape();
+        if (cform && !cform->shapes.empty())
+        {
+            string64 shape_name;
+            GenObjectName(OBJCLASS_SHAPE, shape_name, "shape");
+            CEditShape* eshape = xr_new<CEditShape>((LPVOID)0, shape_name);
+            for (const CShapeData::shape_def& s: cform->shapes)
+            {
+                if (s.type == CShapeData::cfSphere)
+                    eshape->add_sphere(s.data.sphere);
+                else if (s.type == CShapeData::cfBox)
+                    eshape->add_box(s.data.box);
+            }
+            // Position/rotation on the shape must match the entity because
+            // CSpawnPoint::AttachObject copies transform FROM shape TO the
+            // spawn point (not the other way around).
+            eshape->SetPosition(pos);
+            eshape->SetRotation(ang);
+            AppendObject(eshape, false);
+            sp->AttachObject(eshape);
+        }
 
         // Name dedup — the universal duplicate check.
         if (FindObjectByName(entity_name, OBJCLASS_SPAWNPOINT))
