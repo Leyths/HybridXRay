@@ -552,12 +552,23 @@ static void CommandShowImportSummary(const EScene::ImportStats& stats)
         stats.imported, stats.skipped_name, stats.skipped_coord, stats.skipped_excluded, stats.errors);
 }
 
+// IFileDialog keeps a per-GUID "last folder" bag. Without our own GUID, all
+// open-file dialogs in the process share one bag and pollute each other's
+// starting folders (Import → Spawn navigates somewhere, then File → Open
+// lands there instead of $maps$). Assigning a distinct GUID per import type
+// gives each dialog its own memory that doesn't leak into other menu items.
+// Values are arbitrary, freshly-generated, and never re-used elsewhere.
+// clang-format off
+static const GUID kImportLevelSpawnDialogGuid = { 0x2e9d4b13, 0xc7a1, 0x4a52, { 0x8a, 0x1f, 0x0b, 0x92, 0xde, 0xf1, 0x04, 0xa8 } };
+static const GUID kImportLevelGameDialogGuid  = { 0x9c47f5aa, 0x18b6, 0x4c31, { 0xa5, 0x60, 0xf2, 0x71, 0x3d, 0xc8, 0x92, 0x37 } };
+// clang-format on
+
 CCommandVar CommandImportLevelSpawn(CCommandVar p1, CCommandVar p2)
 {
     if (Scene->locked())
         return FALSE;
     xr_string fn = p1.IsString() ? xr_string(p1) : xr_string();
-    if (fn.empty() && !EFS.GetOpenName(EDevice->m_hWnd, "$game_levels$", fn, false, NULL, 0))
+    if (fn.empty() && !EFS.GetOpenNameEx(EDevice->m_hWnd, "$game_levels$", fn, kImportLevelSpawnDialogGuid, false, NULL, 0))
         return FALSE;
     EScene::ImportStats stats;
     if (Scene->ImportLevelSpawn(fn.c_str(), stats))
@@ -571,7 +582,7 @@ CCommandVar CommandImportLevelGame(CCommandVar p1, CCommandVar p2)
     if (Scene->locked())
         return FALSE;
     xr_string fn = p1.IsString() ? xr_string(p1) : xr_string();
-    if (fn.empty() && !EFS.GetOpenName(EDevice->m_hWnd, "$game_levels$", fn, false, NULL, 0))
+    if (fn.empty() && !EFS.GetOpenNameEx(EDevice->m_hWnd, "$game_levels$", fn, kImportLevelGameDialogGuid, false, NULL, 0))
         return FALSE;
     EScene::ImportStats stats;
     if (Scene->ImportLevelGame(fn.c_str(), stats))

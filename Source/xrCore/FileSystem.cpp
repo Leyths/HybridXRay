@@ -108,7 +108,7 @@ UINT_PTR CALLBACK OFNHookProcOldStyle(HWND, UINT, WPARAM, LPARAM)
     return 0;
 }
 
-bool EFS_Utils::GetOpenNameInternal(HWND hWnd, LPCSTR initial, LPSTR buffer, int sz_buf, bool bMulti, LPCSTR offset, int start_flt_ext)
+bool EFS_Utils::GetOpenNameInternal(HWND hWnd, LPCSTR initial, LPSTR buffer, int sz_buf, bool bMulti, LPCSTR offset, int start_flt_ext, const GUID* client_guid)
 {
     VERIFY(buffer && (sz_buf > 0));
     FS_Path&   P = *FS.get_path(initial);
@@ -133,6 +133,11 @@ bool EFS_Utils::GetOpenNameInternal(HWND hWnd, LPCSTR initial, LPSTR buffer, int
 
     CFileDialog fd(CFileDialog::fdOpen);
     fd.Caption = "Open a File";
+
+    // Give this dialog its own persisted MRU when the caller supplied a
+    // client GUID — the shell keys the "last folder" bag on that GUID.
+    if (client_guid)
+        fd.ClientGuid = *client_guid;
 
     if (!strstr(Core.Params, "-remember_last_folder"))
     {

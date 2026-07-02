@@ -29,6 +29,13 @@ public:
     bool                 NoChangeDir;
     bool                 NoPlacesBar;
 
+    // Optional persisted-state key for the Vista+ IFileDialog. Two dialogs
+    // that share this GUID share their remembered "last folder"; different
+    // GUIDs give each dialog its own memory. Zero-GUID (default) means the
+    // shell picks one per process — the legacy behaviour, in which all
+    // dialogs in an app share a single MRU folder.
+    GUID                 ClientGuid;
+
     CFileDialog(int dialog_type);
 
     bool ShowModal(HWND owner);

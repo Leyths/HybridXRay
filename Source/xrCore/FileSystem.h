@@ -10,7 +10,7 @@
 class XRCORE_API EFS_Utils
 {
 protected:
-    bool GetOpenNameInternal(HWND hWnd, LPCSTR initial, LPSTR buffer, int sz_buf, bool bMulti = false, LPCSTR offset = 0, int start_flt_ext = -1);
+    bool GetOpenNameInternal(HWND hWnd, LPCSTR initial, LPSTR buffer, int sz_buf, bool bMulti = false, LPCSTR offset = 0, int start_flt_ext = -1, const GUID* client_guid = 0);
 
 public:
     EFS_Utils();
@@ -22,6 +22,11 @@ public:
 
     bool      GetOpenName(HWND hWnd, LPCSTR initial, string_path& buffer, int sz_buf, bool bMulti = false, LPCSTR offset = 0, int start_flt_ext = -1);
     bool      GetOpenName(HWND hWnd, LPCSTR initial, xr_string& buf, bool bMulti = false, LPCSTR offset = 0, int start_flt_ext = -1);
+    // Same as GetOpenName but with a client GUID that keys the dialog's
+    // persisted "last folder" state. Two callers sharing a GUID share
+    // memory; callers with distinct GUIDs stay isolated from each other
+    // and from the default-GUID pool used by plain GetOpenName.
+    bool      GetOpenNameEx(HWND hWnd, LPCSTR initial, xr_string& buf, const GUID& client_guid, bool bMulti = false, LPCSTR offset = 0, int start_flt_ext = -1);
 
     bool      GetSaveName(LPCSTR initial, string_path& buffer, LPCSTR offset = 0, int start_flt_ext = -1);
     bool      GetSaveName(LPCSTR initial, xr_string& buf, LPCSTR offset = 0, int start_flt_ext = -1);

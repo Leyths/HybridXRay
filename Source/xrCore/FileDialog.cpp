@@ -83,6 +83,7 @@ CFileDialog::CFileDialog(int dialog_type)
     Type          = dialog_type;
     DefaultFilter = 0;
     CurrentFilter = -1;
+    ZeroMemory(&ClientGuid, sizeof(ClientGuid));
 }
 
 void CFileDialog::SetFilters(const char* filters)
@@ -278,6 +279,15 @@ int CFileDialog::ShowVista(HWND owner)
                 break;
 
             dlg = sdlg;
+        }
+
+        // Give this dialog its own persisted MRU state when a caller supplied
+        // a client GUID. Must be set BEFORE any other IFileDialog call, per
+        // MSDN — otherwise the dialog binds to the shell's default state.
+        {
+            static const GUID zero_guid = {0};
+            if (memcmp(&ClientGuid, &zero_guid, sizeof(GUID)) != 0)
+                dlg->SetClientGuid(ClientGuid);
         }
 
         DWORD flags = 0;
