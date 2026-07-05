@@ -548,8 +548,24 @@ static void CommandShowImportSummary(const EScene::ImportStats& stats)
         "Skipped by name: %d\n"
         "Skipped by coordinate (graph_point overlap): %d\n"
         "Skipped as compiler-generated (meshes / climable): %d\n"
+        "Skipped by wrong level (all.spawn only): %d\n"
         "Errors: %d",
-        stats.imported, stats.skipped_name, stats.skipped_coord, stats.skipped_excluded, stats.errors);
+        stats.imported, stats.skipped_name, stats.skipped_coord, stats.skipped_excluded, stats.skipped_wrong_level, stats.errors);
+}
+
+// True if the picked file is an all.spawn (case-insensitive basename match).
+// Extension alone isn't enough — .spawn is also used by level.spawn and by
+// game.spawn saves — so we match the whole basename.
+static bool is_all_spawn_path(LPCSTR fn)
+{
+    if (!fn || !*fn)
+        return false;
+    LPCSTR base = strrchr(fn, '\\');
+    LPCSTR slash = strrchr(fn, '/');
+    if (slash > base)
+        base = slash;
+    base = base ? base + 1 : fn;
+    return 0 == _stricmp(base, "all.spawn");
 }
 
 // IFileDialog keeps a per-GUID "last folder" bag. Without our own GUID, all
@@ -571,7 +587,20 @@ CCommandVar CommandImportLevelSpawn(CCommandVar p1, CCommandVar p2)
     if (fn.empty() && !EFS.GetOpenNameEx(EDevice->m_hWnd, "$game_levels$", fn, kImportLevelSpawnDialogGuid, false, NULL, 0))
         return FALSE;
     EScene::ImportStats stats;
-    if (Scene->ImportLevelSpawn(fn.c_str(), stats))
+    bool                ok;
+    if (is_all_spawn_path(fn.c_str()))
+    {
+        // Route to the level-filtered variant. Level name comes from the
+        // scene's own metadata; empty means the user hasn't configured this
+        // scene yet and ImportAllSpawn will emit an error and bail.
+        LPCSTR level_name = Scene->m_LevelOp.m_LevelPrefix.c_str();
+        ok = Scene->ImportAllSpawn(fn.c_str(), level_name, stats);
+    }
+    else
+    {
+        ok = Scene->ImportLevelSpawn(fn.c_str(), stats);
+    }
+    if (ok)
         CommandShowImportSummary(stats);
     UI->RedrawScene();
     return TRUE;
@@ -585,7 +614,17 @@ CCommandVar CommandImportLevelGame(CCommandVar p1, CCommandVar p2)
     if (fn.empty() && !EFS.GetOpenNameEx(EDevice->m_hWnd, "$game_levels$", fn, kImportLevelGameDialogGuid, false, NULL, 0))
         return FALSE;
     EScene::ImportStats stats;
-    if (Scene->ImportLevelGame(fn.c_str(), stats))
+    bool                ok;
+    if (is_all_spawn_path(fn.c_str()))
+    {
+        LPCSTR level_name = Scene->m_LevelOp.m_LevelPrefix.c_str();
+        ok = Scene->ImportAllSpawnPatrols(fn.c_str(), level_name, stats);
+    }
+    else
+    {
+        ok = Scene->ImportLevelGame(fn.c_str(), stats);
+    }
+    if (ok)
         CommandShowImportSummary(stats);
     UI->RedrawScene();
     return TRUE;

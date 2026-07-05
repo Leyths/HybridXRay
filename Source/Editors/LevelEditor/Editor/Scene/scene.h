@@ -238,6 +238,9 @@ public:
     //                       (breakable_object, climable_object). These are
     //                       auto-generated from level geometry and add no
     //                       editable value if imported back into the scene.
+    //  * skipped_wrong_level — only meaningful for the all.spawn variants;
+    //                       entity's game vertex resolved to a different
+    //                       level than the one being imported into.
     //  * errors           — malformed packet, missing chunk, or entity whose
     //                       section is unknown in the current game's configs.
     struct ImportStats
@@ -246,8 +249,9 @@ public:
         int skipped_name;
         int skipped_coord;
         int skipped_excluded;
+        int skipped_wrong_level;
         int errors;
-        ImportStats(): imported(0), skipped_name(0), skipped_coord(0), skipped_excluded(0), errors(0) {}
+        ImportStats(): imported(0), skipped_name(0), skipped_coord(0), skipped_excluded(0), skipped_wrong_level(0), errors(0) {}
     };
 
     // Read compiled per-level binary files and drop their contents into the
@@ -260,6 +264,14 @@ public:
     //  * excluded sections (breakable_object, climable_object) never enter.
     bool ImportLevelSpawn(LPCSTR path, ImportStats& stats);
     bool ImportLevelGame(LPCSTR path, ImportStats& stats);
+
+    // all.spawn variants — same behaviour as the per-level readers above but
+    // sourced from a mod's global all.spawn. The file's game graph (chunk 4)
+    // provides a vertex → level mapping; entities whose graph vertex resolves
+    // to a level other than level_name are skipped as skipped_wrong_level.
+    // level_name is typically Scene->m_LevelOp.m_LevelPrefix.
+    bool ImportAllSpawn(LPCSTR path, LPCSTR level_name, ImportStats& stats);
+    bool ImportAllSpawnPatrols(LPCSTR path, LPCSTR level_name, ImportStats& stats);
 
 public:
     bool    ExportGame(SExportStreams* F);

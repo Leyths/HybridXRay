@@ -941,6 +941,97 @@ bool CWayObject::LoadFromLevelGame(IReader& F)
     return !m_WayPoints.empty();
 }
 
+bool CWayObject::LoadFromAllSpawn(IReader& F, u16* first_point_gvid_out)
+{
+    // Reset residual state — same reason as LoadFromLevelGame.
+    Clear();
+    m_WayPoints.clear();
+
+    if (first_point_gvid_out)
+        *first_point_gvid_out = u16(-1);
+
+    // CPatrolPath (CGraphAbstractSerialize) has three top-level sub-chunks.
+    // Chunk 0 (vertex count) is redundant with the vertex-chunk enumeration
+    // and we skip it. Chunk 1 holds the vertices; chunk 2 holds the edges.
+    IReader* vchunk = F.open_chunk(1);
+    if (!vchunk)
+        return false;
+
+    // Track vertex_id → position in m_WayPoints so the edges pass can wire
+    // links by source/dest vid rather than positional index (the on-disk
+    // vertex_id is not necessarily the enumeration order).
+    xr_map<u32, u32> vid_to_index;
+    shared_str       name_buf;
+
+    u32              per_vertex_iter;
+    IReader*         vsub = vchunk->open_chunk_iterator(per_vertex_iter);
+    for (; vsub; vsub = vchunk->open_chunk_iterator(per_vertex_iter, vsub))
+    {
+        // Per-vertex outer chunk: sub-chunk 0 = u32 vertex_id, sub-chunk 1 =
+        // CPatrolPoint blob.
+        u32      vid   = u32(-1);
+        IReader* vid_c = vsub->open_chunk(0);
+        if (!vid_c)
+            continue;
+        vid = vid_c->r_u32();
+        vid_c->close();
+
+        IReader* pt_c = vsub->open_chunk(1);
+        if (!pt_c)
+            continue;
+
+        CWayPoint* W = xr_new<CWayPoint>("");
+        pt_c->r_stringZ(name_buf);
+        W->m_Name = name_buf;
+        pt_c->r_fvector3(W->m_vPosition);
+        W->m_Flags.assign(pt_c->r_u32());
+        pt_c->r_u32();   // level_vertex_id, ignored — not part of the editor model
+        u16 gvid = pt_c->r_u16();
+        pt_c->close();
+
+        // Capture the first point's GVID for the caller's level-filter pass.
+        if (first_point_gvid_out && m_WayPoints.empty())
+            *first_point_gvid_out = gvid;
+
+        vid_to_index[vid] = (u32)m_WayPoints.size();
+        m_WayPoints.push_back(W);
+    }
+    vchunk->close();
+
+    if (m_WayPoints.empty())
+        return false;
+
+    // Edges chunk is optional (isolated single-node patrols exist). Format is
+    // flat: for each source vertex_id, u32 edge_count, then edge_count *
+    // {u32 target_vid, float weight}. Loop until the chunk is exhausted.
+    IReader* echunk = F.open_chunk(2);
+    if (echunk)
+    {
+        while (!echunk->eof())
+        {
+            u32 src_vid    = echunk->r_u32();
+            u32 edge_count = echunk->r_u32();
+            for (u32 i = 0; i < edge_count; ++i)
+            {
+                u32   dst_vid = echunk->r_u32();
+                float weight  = echunk->r_float();
+
+                auto  it_src  = vid_to_index.find(src_vid);
+                auto  it_dst  = vid_to_index.find(dst_vid);
+                if (it_src == vid_to_index.end() || it_dst == vid_to_index.end())
+                    continue;   // dangling reference — drop the link, keep the point
+                m_WayPoints[it_src->second]->CreateLink(m_WayPoints[it_dst->second], weight);
+            }
+        }
+        echunk->close();
+    }
+
+    m_Type             = wtPatrolPath;
+    m_HasColorOverride = FALSE;
+    m_ColorOverride.set(1.0f, 1.0f, 1.0f, 1.0f);
+    return true;
+}
+
 void CWayObject::SaveStream(IWriter& F)
 {
     CCustomObject::SaveStream(F);

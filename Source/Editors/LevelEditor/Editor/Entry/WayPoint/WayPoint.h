@@ -151,6 +151,16 @@ public:
     // or claims a count that overflows the reader.
     bool                   LoadFromLevelGame(IReader& sub_chunk);
 
+    // Populate this way object from an all.spawn CPatrolPath data chunk
+    // (CGraphAbstractSerialize format — chunk 0=vertex_count, chunk 1=vertices
+    // container, chunk 2=edges). Different byte layout from LoadFromLevelGame:
+    //   per point:  stringZ name, Fvector pos, u32 flags, u32 lvid, u16 gvid
+    //   per edge:   u32 src_vid, u32 edge_count, per-edge {u32 dst_vid, f32 w}
+    // Optional out param receives the first point's game_vertex_id so the
+    // caller can level-filter without a separate peek pass. Returns false on
+    // malformed data.
+    bool                   LoadFromAllSpawn(IReader& patrol_data, u16* first_point_gvid_out);
+
     virtual bool           ExportGame(SExportStreams* data);
 
     virtual void           FillProp(LPCSTR pref, PropItemVec& items);

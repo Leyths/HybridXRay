@@ -6,16 +6,17 @@
 #include "../Entry/Shape/EShape.h"
 #include "../../../../xrEngine/LevelGameDef.h"
 #include "../../../../xrEngine/xrISEAbstract.h"
+#include "../../../../xrEngine/xrISEALifeObject.h"
 #include "../../../../xrServerEntities/xrServer_Object_Base.h"
 #include "../../../../xrServerEntities/xrMessages.h"
 
-// SceneImport — read the compiled per-level binary files (level.spawn,
-// level.game) and drop their contents into the currently-loaded scene as
-// fresh editable objects, organised under a timestamped folder.
+// SceneImport — read the compiled binary spawn / game files (level.spawn,
+// level.game, all.spawn) and drop their contents into the currently-loaded
+// scene as fresh editable objects, organised under a timestamped folder.
 //
 // Both routines reuse the existing engine decoders (CSE_Abstract::Spawn_Read
-// for entities, the WAYOBJECT_CHUNK_POINTS/LINKS layout for patrols) rather
-// than reimplementing the packet format.
+// for entities, our CWayObject::LoadFromLevelGame / LoadFromAllSpawn for
+// patrols) rather than reimplementing the packet format.
 //
 // Dedup philosophy — every named entity in the SDK is assumed to have a
 // globally-unique name (that's how the editor generates them), so name match
@@ -23,6 +24,11 @@
 // which the compiler auto-numbers and whose real identity is the (type, xyz)
 // pair — two graph_points at the same position are the same node — so we
 // coord-dedup those against existing graph_points only.
+//
+// all.spawn variants add a level filter driven by the file's game graph
+// (chunk 4). The graph maps game_vertex_id → level_id → level name; entities
+// whose graph vertex resolves to a level other than the currently-loaded one
+// are skipped (skipped_wrong_level).
 
 namespace
 {
@@ -95,6 +101,391 @@ static CCustomObject* find_matching_graph_point(const Fvector& pos)
     }
     return nullptr;
 }
+
+// ---------------------------------------------------------------------------
+// GameGraphLevelMap — parses all.spawn chunk 4 (the compiled game graph) into
+// a vertex_id → level_name lookup. Only the level table and the packed
+// (level_id:8 | level_vertex_id:24) word at byte 24 of each 42-byte vertex
+// record are read; everything else in the graph is ignored.
+//
+// See `compiler/parsers/game_graph.py` in the LAMBDA tools for the reference
+// implementation of the on-disk format.
+// ---------------------------------------------------------------------------
+class GameGraphLevelMap
+{
+public:
+    GameGraphLevelMap(): m_valid(false), m_vertex_count(0) {}
+
+    // Populate from an already-opened chunk 4. Returns false if the header
+    // looks malformed. Versions 8, 9 and 10 all share the vertex layout
+    // (see `game_graph_space.h::CVertex` — 42 bytes, packed level word at
+    // offset 24). Newer values still get read but warned.
+    bool load(IReader& F)
+    {
+        u8  version           = F.r_u8();
+        u16 vertex_count      = F.r_u16();
+        u32 edge_count        = F.r_u32();
+        (void)edge_count;
+        u32 death_point_count = F.r_u32();
+        (void)death_point_count;
+        F.advance(16);   // xrGUID
+        u8 level_count = F.r_u8();
+
+        if (version < 8 || version > 10)
+            Msg("! Import: unfamiliar game graph version %u — attempting to read anyway", (u32)version);
+
+        // Per-level record: stringZ name, Fvector offset, u8 level_id,
+        // stringZ section, xrGUID.
+        shared_str name_buf;
+        shared_str section_buf;
+        for (u8 i = 0; i < level_count; ++i)
+        {
+            F.r_stringZ(name_buf);
+            F.advance(12);   // Fvector offset — unused
+            u8 level_id = F.r_u8();
+            F.r_stringZ(section_buf);
+            F.advance(16);   // xrGUID
+
+            m_level_by_id[level_id] = name_buf;
+        }
+
+        m_vertex_count = vertex_count;
+        // Vertex records are exactly 42 bytes and contain the packed level word
+        // at offset 24. We stream them here so a later find_level() is a plain
+        // map lookup.
+        for (u32 v = 0; v < vertex_count; ++v)
+        {
+            F.advance(24);           // local + global Fvector = 2 * 12 = 24
+            u32 packed = F.r_u32();
+            F.advance(42 - 24 - 4);   // 4 vertex_types + 4 edge_off + 4 dp_off + 1 nc + 1 dpc = 14
+            u32 level_id = packed & 0xFFu;
+            m_level_by_vertex[v] = (u8)level_id;
+        }
+
+        m_valid = true;
+        return true;
+    }
+
+    // Log a level_id → name → vertex_count breakdown. Diagnostic. Runs
+    // O(levels * vertices) but this is called once per import and levels ≤ 30,
+    // vertices ≤ ~100k, so the cost is negligible.
+    void log_summary() const
+    {
+        Msg("- Import: game graph has %u levels, %u vertices", (u32)m_level_by_id.size(), (u32)m_vertex_count);
+        for (auto& kv: m_level_by_id)
+        {
+            u32 count = 0;
+            for (auto& vk: m_level_by_vertex)
+                if (vk.second == kv.first)
+                    ++count;
+            Msg("- Import:   level_id=%u name='%s' vertex_count=%u", (u32)kv.first, kv.second.c_str(), count);
+        }
+    }
+
+    bool valid() const { return m_valid; }
+
+    // Vertex count for a specific level name. Zero means "level table has an
+    // entry for this name but no vertices point at it" — a stub level, e.g.
+    // reserved for a mod that never filled it in. Callers can use this to
+    // distinguish "wrong file" from "level exists but is empty".
+    u32 vertex_count_for_level(LPCSTR name) const
+    {
+        if (!name || !*name)
+            return 0;
+        u8 target_id = 0xFF;
+        for (auto& kv: m_level_by_id)
+            if (0 == xr_strcmp(kv.second.c_str(), name))
+            {
+                target_id = kv.first;
+                break;
+            }
+        if (target_id == 0xFF)
+            return 0;
+        u32 count = 0;
+        for (auto& kv: m_level_by_vertex)
+            if (kv.second == target_id)
+                ++count;
+        return count;
+    }
+
+    // Look up the level name for the given game vertex id. False if the id
+    // isn't in the graph.
+    bool find_level(u32 vertex_id, shared_str& out) const
+    {
+        auto it_v = m_level_by_vertex.find(vertex_id);
+        if (it_v == m_level_by_vertex.end())
+            return false;
+        auto it_l = m_level_by_id.find(it_v->second);
+        if (it_l == m_level_by_id.end())
+            return false;
+        out = it_l->second;
+        return true;
+    }
+
+    // Whether the graph's level table contains the given name (case sensitive
+    // — the SDK's m_LevelPrefix is stored as-is and the game graph likewise).
+    bool has_level(LPCSTR name) const
+    {
+        if (!name || !*name)
+            return false;
+        for (auto& kv: m_level_by_id)
+            if (0 == xr_strcmp(kv.second.c_str(), name))
+                return true;
+        return false;
+    }
+
+    // For error messages: build a comma-separated list of the levels present.
+    void list_levels(xr_string& out) const
+    {
+        out.clear();
+        for (auto& kv: m_level_by_id)
+        {
+            if (!out.empty())
+                out += ", ";
+            out += kv.second.c_str();
+        }
+    }
+
+private:
+    bool                       m_valid;
+    u32                        m_vertex_count;
+    xr_map<u8, shared_str>     m_level_by_id;
+    xr_map<u32, u8>            m_level_by_vertex;
+};
+
+// ---------------------------------------------------------------------------
+// Per-packet spawn-import body — shared between the level.spawn and all.spawn
+// paths. On entry `packet` is a NET_Packet whose B.data / B.count hold a raw
+// M_SPAWN blob; that's exactly what CSE_Abstract::Spawn_Read expects.
+//
+// gmap + filter_level are non-null only for the all.spawn path; when set,
+// entities whose m_tGraphID doesn't resolve to filter_level are dropped.
+// ---------------------------------------------------------------------------
+static void import_one_spawn_packet(
+    NET_Packet& packet, CFolderObject*& folder,
+    const GameGraphLevelMap* gmap, LPCSTR filter_level,
+    EScene::ImportStats& stats)
+{
+    u16 tag;
+    packet.r_begin(tag);
+    if (tag != M_SPAWN)
+    {
+        Msg("! Import: chunk tag 0x%04x != M_SPAWN, skipped", tag);
+        stats.errors++;
+        return;
+    }
+    string64 section;
+    packet.r_stringZ(section);
+
+    // Compiler-generated clutter — drop before spending any work on it.
+    if (is_excluded_section(section))
+    {
+        string4096 name_peek = {0};
+        packet.r_stringZ(name_peek);
+        Msg("- Import skip: '%s' - excluded section '%s'", name_peek, section);
+        stats.skipped_excluded++;
+        return;
+    }
+
+    CSpawnPoint* sp = xr_new<CSpawnPoint>((LPVOID)0, "");
+    if (!sp->CreateSpawnData(section))
+    {
+        Msg("- Import skip: entity section '%s' unknown in current game configs", section);
+        xr_delete(sp);
+        stats.errors++;
+        return;
+    }
+
+    if (!sp->m_SpawnData.m_Data->Spawn_Read(packet))
+    {
+        Msg("- Import skip: Spawn_Read failed for section '%s'", section);
+        xr_delete(sp);
+        stats.errors++;
+        return;
+    }
+
+    LPCSTR         entity_name = sp->m_SpawnData.m_Data->name_replace();
+    const Fvector& pos         = sp->m_SpawnData.m_Data->position();
+    const Fvector& ang         = sp->m_SpawnData.m_Data->angle();
+
+    // Level filter — only meaningful when we have both a graph and a target
+    // level. Non-ALife entities lack m_tGraphID entirely; they get imported
+    // unconditionally (they're rare enough that the noise is acceptable and
+    // the alternative is silently dropping them).
+    if (gmap && filter_level && *filter_level)
+    {
+        ISE_ALifeObject* alife = sp->m_SpawnData.m_Data->CastALifeObject();
+        if (alife)
+        {
+            shared_str resolved;
+            if (gmap->find_level((u32)alife->m_tGraphID, resolved))
+            {
+                if (0 != xr_strcmp(resolved.c_str(), filter_level))
+                {
+                    Msg("- Import skip: '%s' at (%.2f, %.2f, %.2f) - level '%s' != '%s'",
+                        entity_name, pos.x, pos.y, pos.z, resolved.c_str(), filter_level);
+                    xr_delete(sp);
+                    stats.skipped_wrong_level++;
+                    return;
+                }
+            }
+            // If the graph vertex isn't in the map (rare — stale spawn packet
+            // pointing at a graph vertex that no longer exists), fall through
+            // and let the user see it rather than silently dropping. The name
+            // dedup below still catches genuine duplicates.
+        }
+    }
+
+    sp->SetName(entity_name);
+    // Set{Position,Rotation} are re-declared protected on CSpawnPoint;
+    // call through the CCustomObject base where they are public.
+    static_cast<CCustomObject*>(sp)->SetPosition(pos);
+    static_cast<CCustomObject*>(sp)->SetRotation(ang);
+
+    // Shape-bearing entities (space_restrictor, level_changer, smart_terrain,
+    // campfire, torrid_zone, ...) carry their cform inside the packet.
+    // Spawn_Read populated m_Data->shape()->shapes; we mirror that into a
+    // CEditShape and attach it so the volume is visible in the editor.
+    ISE_Shape* cform = sp->m_SpawnData.m_Data->shape();
+    if (cform && !cform->shapes.empty())
+    {
+        string64 shape_name;
+        Scene->GenObjectName(OBJCLASS_SHAPE, shape_name, "shape");
+        CEditShape* eshape = xr_new<CEditShape>((LPVOID)0, shape_name);
+        for (const CShapeData::shape_def& s: cform->shapes)
+        {
+            if (s.type == CShapeData::cfSphere)
+                eshape->add_sphere(s.data.sphere);
+            else if (s.type == CShapeData::cfBox)
+                eshape->add_box(s.data.box);
+        }
+        // Position/rotation on the shape must match the entity because
+        // CSpawnPoint::AttachObject copies transform FROM shape TO the
+        // spawn point (not the other way around).
+        eshape->SetPosition(pos);
+        eshape->SetRotation(ang);
+        Scene->AppendObject(eshape, false);
+        sp->AttachObject(eshape);
+    }
+
+    // Name dedup — the universal duplicate check.
+    if (Scene->FindObjectByName(entity_name, OBJCLASS_SPAWNPOINT))
+    {
+        Msg("- Import skip: '%s' at (%.2f, %.2f, %.2f) - duplicate name", entity_name, pos.x, pos.y, pos.z);
+        xr_delete(sp);
+        stats.skipped_name++;
+        return;
+    }
+
+    // Coord dedup — graph_point only, because that's the only entity
+    // class whose identity is inherently positional.
+    if (0 == strcmp(section, "graph_point"))
+    {
+        if (CCustomObject* near_obj = find_matching_graph_point(pos))
+        {
+            Msg("- Import skip: '%s' at (%.2f, %.2f, %.2f) - overlapping graph_point '%s'", entity_name, pos.x, pos.y, pos.z, near_obj->GetName());
+            xr_delete(sp);
+            stats.skipped_coord++;
+            return;
+        }
+    }
+
+    ensure_folder(OBJCLASS_SPAWNPOINT, folder);
+    Scene->AppendObject(sp, false);
+    folder->AddChild(sp);
+    stats.imported++;
+}
+
+// ---------------------------------------------------------------------------
+// Per-patrol import body for the all.spawn path. Chunk layout on entry: `sub`
+// is one per-patrol chunk (sub-chunk 0 = name stringZ, sub-chunk 1 = CPatrolPath
+// data). CWayObject::LoadFromAllSpawn does the format-specific parse; here
+// we handle the level filter and the folder/dedup wiring.
+// ---------------------------------------------------------------------------
+static void import_one_all_spawn_patrol(
+    IReader* sub, CFolderObject*& folder,
+    const GameGraphLevelMap* gmap, LPCSTR filter_level,
+    EScene::ImportStats& stats)
+{
+    IReader* name_chunk = sub->open_chunk(0);
+    if (!name_chunk)
+    {
+        stats.errors++;
+        return;
+    }
+    shared_str patrol_name;
+    name_chunk->r_stringZ(patrol_name);
+    name_chunk->close();
+
+    IReader* path_chunk = sub->open_chunk(1);
+    if (!path_chunk)
+    {
+        stats.errors++;
+        return;
+    }
+
+    // Load once. This gives us the first-point GVID for the level filter, and
+    // if it turns out to be the wrong level we throw the CWayObject away.
+    // Cheaper than a peek-then-load two-pass — the CPatrolPath allocations are
+    // small (typical patrol has 2-8 points).
+    CWayObject* w = xr_new<CWayObject>((LPVOID)0, patrol_name.c_str());
+    u16 first_gvid = u16(-1);
+    if (!w->LoadFromAllSpawn(*path_chunk, &first_gvid))
+    {
+        Msg("- Import skip: patrol '%s' has malformed points/edges", patrol_name.c_str());
+        xr_delete(w);
+        path_chunk->close();
+        stats.errors++;
+        return;
+    }
+    path_chunk->close();
+
+    // Level filter. GVID of 0 or 0xFFFF is an "unknown/unresolved" sentinel in
+    // the game format; without a resolvable location we can't say whether the
+    // patrol belongs here, so we skip and count as errors rather than force it
+    // through (see plan §"Fallback for unresolvable GVID").
+    if (gmap && filter_level && *filter_level)
+    {
+        if (first_gvid == 0 || first_gvid == u16(-1))
+        {
+            Msg("- Import skip: patrol '%s' - first point has no valid game_vertex_id", patrol_name.c_str());
+            xr_delete(w);
+            stats.errors++;
+            return;
+        }
+        shared_str resolved;
+        if (!gmap->find_level((u32)first_gvid, resolved))
+        {
+            Msg("- Import skip: patrol '%s' - game_vertex_id %u not in graph", patrol_name.c_str(), (u32)first_gvid);
+            xr_delete(w);
+            stats.errors++;
+            return;
+        }
+        if (0 != xr_strcmp(resolved.c_str(), filter_level))
+        {
+            Msg("- Import skip: patrol '%s' - level '%s' != '%s'", patrol_name.c_str(), resolved.c_str(), filter_level);
+            xr_delete(w);
+            stats.skipped_wrong_level++;
+            return;
+        }
+    }
+
+    // Name dedup after level check — no point warning "duplicate name" for a
+    // patrol we would have rejected anyway.
+    if (Scene->FindObjectByName(patrol_name.c_str(), OBJCLASS_WAY))
+    {
+        Msg("- Import skip: patrol '%s' - duplicate name", patrol_name.c_str());
+        xr_delete(w);
+        stats.skipped_name++;
+        return;
+    }
+
+    ensure_folder(OBJCLASS_WAY, folder);
+    Scene->AppendObject(w, false);
+    folder->AddChild(w);
+    stats.imported++;
+}
+
 }   // namespace
 
 bool EScene::ImportLevelSpawn(LPCSTR path, ImportStats& stats)
@@ -123,110 +514,7 @@ bool EScene::ImportLevelSpawn(LPCSTR path, ImportStats& stats)
         }
         chunk->r(packet.B.data, packet.B.count);
 
-        // Peek: u16 M_SPAWN | stringZ section | stringZ entity_name | ...
-        // Spawn_Read below re-invokes r_begin so the read cursor left here
-        // is irrelevant to the subsequent full parse.
-        u16 tag;
-        packet.r_begin(tag);
-        if (tag != M_SPAWN)
-        {
-            Msg("! Import: chunk tag 0x%04x != M_SPAWN, skipped", tag);
-            stats.errors++;
-            continue;
-        }
-        string64 section;
-        packet.r_stringZ(section);
-
-        // Compiler-generated clutter — drop before spending any work on it.
-        if (is_excluded_section(section))
-        {
-            string4096 name_peek = {0};
-            packet.r_stringZ(name_peek);
-            Msg("- Import skip: '%s' - excluded section '%s'", name_peek, section);
-            stats.skipped_excluded++;
-            continue;
-        }
-
-        CSpawnPoint* sp = xr_new<CSpawnPoint>((LPVOID)0, "");
-        if (!sp->CreateSpawnData(section))
-        {
-            Msg("- Import skip: entity section '%s' unknown in current game configs", section);
-            xr_delete(sp);
-            stats.errors++;
-            continue;
-        }
-
-        if (!sp->m_SpawnData.m_Data->Spawn_Read(packet))
-        {
-            Msg("- Import skip: Spawn_Read failed for section '%s'", section);
-            xr_delete(sp);
-            stats.errors++;
-            continue;
-        }
-
-        LPCSTR         entity_name = sp->m_SpawnData.m_Data->name_replace();
-        const Fvector& pos         = sp->m_SpawnData.m_Data->position();
-        const Fvector& ang         = sp->m_SpawnData.m_Data->angle();
-        sp->SetName(entity_name);
-        // Set{Position,Rotation} are re-declared protected on CSpawnPoint;
-        // call through the CCustomObject base where they are public.
-        static_cast<CCustomObject*>(sp)->SetPosition(pos);
-        static_cast<CCustomObject*>(sp)->SetRotation(ang);
-
-        // Shape-bearing entities (space_restrictor, level_changer, smart_terrain,
-        // campfire, torrid_zone, ...) carry their cform inside the packet.
-        // Spawn_Read populated m_Data->shape()->shapes; we mirror that into a
-        // CEditShape and attach it so the volume is visible in the editor.
-        // Without this the spawn point would show only as a point marker,
-        // which is what the user reported as "missing associated shapes".
-        ISE_Shape* cform = sp->m_SpawnData.m_Data->shape();
-        if (cform && !cform->shapes.empty())
-        {
-            string64 shape_name;
-            GenObjectName(OBJCLASS_SHAPE, shape_name, "shape");
-            CEditShape* eshape = xr_new<CEditShape>((LPVOID)0, shape_name);
-            for (const CShapeData::shape_def& s: cform->shapes)
-            {
-                if (s.type == CShapeData::cfSphere)
-                    eshape->add_sphere(s.data.sphere);
-                else if (s.type == CShapeData::cfBox)
-                    eshape->add_box(s.data.box);
-            }
-            // Position/rotation on the shape must match the entity because
-            // CSpawnPoint::AttachObject copies transform FROM shape TO the
-            // spawn point (not the other way around).
-            eshape->SetPosition(pos);
-            eshape->SetRotation(ang);
-            AppendObject(eshape, false);
-            sp->AttachObject(eshape);
-        }
-
-        // Name dedup — the universal duplicate check.
-        if (FindObjectByName(entity_name, OBJCLASS_SPAWNPOINT))
-        {
-            Msg("- Import skip: '%s' at (%.2f, %.2f, %.2f) - duplicate name", entity_name, pos.x, pos.y, pos.z);
-            xr_delete(sp);
-            stats.skipped_name++;
-            continue;
-        }
-
-        // Coord dedup — graph_point only, because that's the only entity
-        // class whose identity is inherently positional.
-        if (0 == strcmp(section, "graph_point"))
-        {
-            if (CCustomObject* near_obj = find_matching_graph_point(pos))
-            {
-                Msg("- Import skip: '%s' at (%.2f, %.2f, %.2f) - overlapping graph_point '%s'", entity_name, pos.x, pos.y, pos.z, near_obj->GetName());
-                xr_delete(sp);
-                stats.skipped_coord++;
-                continue;
-            }
-        }
-
-        ensure_folder(OBJCLASS_SPAWNPOINT, folder);
-        AppendObject(sp, false);
-        folder->AddChild(sp);
-        stats.imported++;
+        import_one_spawn_packet(packet, folder, nullptr, nullptr, stats);
     }
 
     FS.r_close(R);
@@ -309,5 +597,226 @@ bool EScene::ImportLevelGame(LPCSTR path, ImportStats& stats)
     patrols->close();
     FS.r_close(R);
     Msg("- Import: level.game done — imported=%d skipped_name=%d errors=%d", stats.imported, stats.skipped_name, stats.errors);
+    return true;
+}
+
+bool EScene::ImportAllSpawn(LPCSTR path, LPCSTR level_name, ImportStats& stats)
+{
+    if (!level_name || !*level_name)
+    {
+        ELog.DlgMsg(mtError, "! Import: current scene has no level name — set the Level Prefix in Scene Options first.");
+        return false;
+    }
+
+    IReader* R = FS.r_open(path);
+    if (!R)
+    {
+        ELog.DlgMsg(mtError, "! Import: can't open '%s'", path);
+        return false;
+    }
+
+    Msg("- Import: reading all.spawn '%s' for level '%s'", path, level_name);
+
+    // Chunk 4 — game graph. Required so we can filter entities by level.
+    // (Anomaly compiler uses id 4 per the LAMBDA parsers.)
+    GameGraphLevelMap gmap;
+    IReader*          graph_chunk = R->open_chunk(4);
+    if (!graph_chunk)
+    {
+        ELog.DlgMsg(mtError, "! Import: '%s' has no game graph chunk (is this an all.spawn?)", path);
+        FS.r_close(R);
+        return false;
+    }
+    if (!gmap.load(*graph_chunk))
+    {
+        graph_chunk->close();
+        ELog.DlgMsg(mtError, "! Import: '%s' has a malformed game graph", path);
+        FS.r_close(R);
+        return false;
+    }
+    graph_chunk->close();
+    gmap.log_summary();
+
+    if (!gmap.has_level(level_name))
+    {
+        ELog.DlgMsg(mtError,
+            "! Import: the scene name prefix '%s' was not found in the all.spawn.",
+            level_name);
+        FS.r_close(R);
+        return false;
+    }
+
+    // Chunk 1 — SPAWN_CHUNK_DATA. Contains the spawn graph:
+    //   inner chunk 0 = header (spawn name + guid)
+    //   inner chunk 1 = vertices data → per-vertex chunks → sub-chunk 1
+    //                   (CServerEntityWrapper) → sub-chunk 0 (M_SPAWN packet).
+    IReader* spawn_container = R->open_chunk(SPAWN_CHUNK_DATA);
+    if (!spawn_container)
+    {
+        ELog.DlgMsg(mtError, "! Import: '%s' has no SPAWN_CHUNK_DATA (id 1)", path);
+        FS.r_close(R);
+        return false;
+    }
+    IReader* vertices_data = spawn_container->open_chunk(1);
+    if (!vertices_data)
+    {
+        spawn_container->close();
+        ELog.DlgMsg(mtError, "! Import: '%s' spawn container has no vertices chunk", path);
+        FS.r_close(R);
+        return false;
+    }
+
+    CFolderObject* folder = nullptr;
+
+    // Iterate over each vertex chunk (one per entity).
+    u32      v_iter;
+    IReader* v_chunk = vertices_data->open_chunk_iterator(v_iter);
+    for (; v_chunk; v_chunk = vertices_data->open_chunk_iterator(v_iter, v_chunk))
+    {
+        // Vertex sub-chunk 1 = CServerEntityWrapper.
+        IReader* wrapper = v_chunk->open_chunk(1);
+        if (!wrapper)
+        {
+            stats.errors++;
+            continue;
+        }
+
+        // Wrapper sub-chunk 0 = a 2-byte payload size followed by the raw
+        // M_SPAWN NET_Packet bytes. The size prefix comes from Level::save,
+        // not from Spawn_Write itself, and is *inside* the chunk data — the
+        // chunk header does NOT skip past it. So we read the u16, verify it
+        // against the remaining chunk length, then hand only the packet bytes
+        // to Spawn_Read. (Without the skip r_begin would read 0x00c7 or
+        // similar as the "tag" and reject every entity.)
+        IReader* spawn_packet_chunk = wrapper->open_chunk(0);
+        if (!spawn_packet_chunk)
+        {
+            wrapper->close();
+            stats.errors++;
+            continue;
+        }
+
+        u32 chunk_len = spawn_packet_chunk->length();
+        if (chunk_len < 2 + 2)   // size + at least M_SPAWN u16
+        {
+            Msg("! Import: spawn wrapper chunk too small (%u bytes)", chunk_len);
+            spawn_packet_chunk->close();
+            wrapper->close();
+            stats.errors++;
+            continue;
+        }
+        u16 declared_size = spawn_packet_chunk->r_u16();
+        u32 remaining     = chunk_len - 2;
+        if (declared_size != remaining)
+        {
+            // Header inconsistency — either not the format we expect or a
+            // corrupted mod tool export. Fall back to trusting the chunk
+            // length so we don't drop a whole file over one bad packet.
+            Msg("! Import: spawn packet declared size %u != remaining %u — trusting remaining", (u32)declared_size, remaining);
+        }
+
+        NET_Packet packet;
+        packet.B.count = remaining;
+        if (packet.B.count == 0 || packet.B.count >= NET_PacketSizeLimit)
+        {
+            Msg("! Import: spawn packet size %u out of range", packet.B.count);
+            stats.errors++;
+        }
+        else
+        {
+            spawn_packet_chunk->r(packet.B.data, packet.B.count);
+            import_one_spawn_packet(packet, folder, &gmap, level_name, stats);
+        }
+
+        spawn_packet_chunk->close();
+        wrapper->close();
+    }
+
+    vertices_data->close();
+    spawn_container->close();
+    FS.r_close(R);
+    Msg("- Import: all.spawn done — imported=%d skipped_name=%d skipped_coord=%d skipped_excluded=%d skipped_wrong_level=%d errors=%d",
+        stats.imported, stats.skipped_name, stats.skipped_coord, stats.skipped_excluded, stats.skipped_wrong_level, stats.errors);
+    return true;
+}
+
+bool EScene::ImportAllSpawnPatrols(LPCSTR path, LPCSTR level_name, ImportStats& stats)
+{
+    if (!level_name || !*level_name)
+    {
+        ELog.DlgMsg(mtError, "! Import: current scene has no level name — set the Level Prefix in Scene Options first.");
+        return false;
+    }
+
+    IReader* R = FS.r_open(path);
+    if (!R)
+    {
+        ELog.DlgMsg(mtError, "! Import: can't open '%s'", path);
+        return false;
+    }
+
+    Msg("- Import: reading all.spawn patrols from '%s' for level '%s'", path, level_name);
+
+    // Chunk 4 — game graph, same as ImportAllSpawn.
+    GameGraphLevelMap gmap;
+    IReader*          graph_chunk = R->open_chunk(4);
+    if (!graph_chunk)
+    {
+        ELog.DlgMsg(mtError, "! Import: '%s' has no game graph chunk (is this an all.spawn?)", path);
+        FS.r_close(R);
+        return false;
+    }
+    if (!gmap.load(*graph_chunk))
+    {
+        graph_chunk->close();
+        ELog.DlgMsg(mtError, "! Import: '%s' has a malformed game graph", path);
+        FS.r_close(R);
+        return false;
+    }
+    graph_chunk->close();
+    gmap.log_summary();
+
+    if (!gmap.has_level(level_name))
+    {
+        ELog.DlgMsg(mtError,
+            "! Import: the scene name prefix '%s' was not found in the all.spawn.",
+            level_name);
+        FS.r_close(R);
+        return false;
+    }
+
+    // Chunk 3 — CPatrolPathStorage. Layout:
+    //   inner chunk 0 = u32 patrol_count (ignored — enumeration handles it)
+    //   inner chunk 1 = patrols container → per-patrol chunks.
+    IReader* patrol_storage = R->open_chunk(3);
+    if (!patrol_storage)
+    {
+        ELog.DlgMsg(mtError, "! Import: '%s' has no patrol path chunk (id 3)", path);
+        FS.r_close(R);
+        return false;
+    }
+    IReader* patrols_container = patrol_storage->open_chunk(1);
+    if (!patrols_container)
+    {
+        patrol_storage->close();
+        ELog.DlgMsg(mtError, "! Import: '%s' patrol storage has no patrols container", path);
+        FS.r_close(R);
+        return false;
+    }
+
+    CFolderObject* folder = nullptr;
+
+    u32            p_iter;
+    IReader*       sub = patrols_container->open_chunk_iterator(p_iter);
+    for (; sub; sub = patrols_container->open_chunk_iterator(p_iter, sub))
+    {
+        import_one_all_spawn_patrol(sub, folder, &gmap, level_name, stats);
+    }
+
+    patrols_container->close();
+    patrol_storage->close();
+    FS.r_close(R);
+    Msg("- Import: all.spawn patrols done — imported=%d skipped_name=%d skipped_wrong_level=%d errors=%d",
+        stats.imported, stats.skipped_name, stats.skipped_wrong_level, stats.errors);
     return true;
 }
