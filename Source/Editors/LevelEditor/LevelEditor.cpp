@@ -169,6 +169,15 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
     // scene is fully populated before the dedup pass compares against it.
     const xr_string auto_import_spawn = parse_string_arg(L"-import-spawn");
     const xr_string auto_import_game  = parse_string_arg(L"-import-game");
+    auto is_all_spawn_basename = [](LPCSTR fn) -> bool {
+        if (!fn || !*fn)
+            return false;
+        LPCSTR b1 = strrchr(fn, '\\');
+        LPCSTR b2 = strrchr(fn, '/');
+        LPCSTR base = (b2 > b1) ? b2 : b1;
+        base = base ? base + 1 : fn;
+        return 0 == _stricmp(base, "all.spawn");
+    };
     bool            import_spawn_pending = !auto_import_spawn.empty();
     bool            import_game_pending  = !auto_import_game.empty();
     int             frames_since_load = 0;
@@ -197,7 +206,15 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
                     Msg("- LevelEditor: auto-import via -import-spawn: '%s'", auto_import_spawn.c_str());
                     FlushLog();
                     EScene::ImportStats stats;
-                    Scene->ImportLevelSpawn(auto_import_spawn.c_str(), stats);
+                    if (is_all_spawn_basename(auto_import_spawn.c_str()))
+                    {
+                        LPCSTR level_name = Scene->m_LevelOp.m_LevelPrefix.c_str();
+                        Scene->ImportAllSpawn(auto_import_spawn.c_str(), level_name, stats);
+                    }
+                    else
+                    {
+                        Scene->ImportLevelSpawn(auto_import_spawn.c_str(), stats);
+                    }
                 }
                 if (import_game_pending)
                 {
@@ -205,7 +222,15 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
                     Msg("- LevelEditor: auto-import via -import-game: '%s'", auto_import_game.c_str());
                     FlushLog();
                     EScene::ImportStats stats;
-                    Scene->ImportLevelGame(auto_import_game.c_str(), stats);
+                    if (is_all_spawn_basename(auto_import_game.c_str()))
+                    {
+                        LPCSTR level_name = Scene->m_LevelOp.m_LevelPrefix.c_str();
+                        Scene->ImportAllSpawnPatrols(auto_import_game.c_str(), level_name, stats);
+                    }
+                    else
+                    {
+                        Scene->ImportLevelGame(auto_import_game.c_str(), stats);
+                    }
                 }
             }
             if (auto_exit_frames > 0 && frames_since_load >= auto_exit_frames)
