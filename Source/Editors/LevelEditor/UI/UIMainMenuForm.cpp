@@ -51,13 +51,13 @@ void UIMainMenuForm::Draw()
             ImGui::Separator();
             if (ImGui::BeginMenu("Import"_RU >> u8"Импорт", ""))
             {
-                if (ImGui::MenuItem("Spawn Entities (.spawn)..."_RU >> u8"Спавн-объекты (.spawn)...", ""))
+                if (ImGui::MenuItem("Spawn Entities (level.spawn / all.spawn)..."_RU >> u8"Спавн-объекты (level.spawn / all.spawn)...", ""))
                 {
                     ExecCommand(COMMAND_IMPORT_LEVEL_SPAWN);
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (ImGui::MenuItem("Patrol Paths (.game)..."_RU >> u8"Пути патрулирования (.game)...", ""))
+                if (ImGui::MenuItem("Patrol Paths (level.game / all.spawn)..."_RU >> u8"Пути патрулирования (level.game / all.spawn)...", ""))
                 {
                     ExecCommand(COMMAND_IMPORT_LEVEL_GAME);
                 }
