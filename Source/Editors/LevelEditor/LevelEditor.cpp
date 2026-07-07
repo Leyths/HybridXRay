@@ -170,13 +170,19 @@ int WINAPI               wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
     const xr_string auto_import_spawn = parse_string_arg(L"-import-spawn");
     const xr_string auto_import_game  = parse_string_arg(L"-import-game");
     auto is_all_spawn_basename = [](LPCSTR fn) -> bool {
+        // Match any basename that starts with "all" and ends in ".spawn"
+        // (all.spawn, all(1).spawn, all_backup.spawn, ...) — mirrors the
+        // File menu's picker so scripted CLI runs route the same way.
         if (!fn || !*fn)
             return false;
         LPCSTR b1 = strrchr(fn, '\\');
         LPCSTR b2 = strrchr(fn, '/');
         LPCSTR base = (b2 > b1) ? b2 : b1;
         base = base ? base + 1 : fn;
-        return 0 == _stricmp(base, "all.spawn");
+        LPCSTR ext = strrchr(base, '.');
+        if (!ext || 0 != _stricmp(ext, ".spawn"))
+            return false;
+        return 0 == _strnicmp(base, "all", 3);
     };
     bool            import_spawn_pending = !auto_import_spawn.empty();
     bool            import_game_pending  = !auto_import_game.empty();

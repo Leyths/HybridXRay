@@ -553,9 +553,12 @@ static void CommandShowImportSummary(const EScene::ImportStats& stats)
         stats.imported, stats.skipped_name, stats.skipped_coord, stats.skipped_excluded, stats.skipped_wrong_level, stats.errors);
 }
 
-// True if the picked file is an all.spawn (case-insensitive basename match).
-// Extension alone isn't enough — .spawn is also used by level.spawn and by
-// game.spawn saves — so we match the whole basename.
+// True if the picked file is an all.spawn variant (case-insensitive basename
+// match). Extension alone isn't enough — .spawn is also used by level.spawn
+// and by game.spawn saves — so we match on the "all" basename prefix. Any
+// suffix before the extension is accepted, which covers browser-renamed
+// copies like all(1).spawn / all_backup.spawn / all_karo.spawn that users
+// routinely pass through the picker.
 static bool is_all_spawn_path(LPCSTR fn)
 {
     if (!fn || !*fn)
@@ -565,7 +568,11 @@ static bool is_all_spawn_path(LPCSTR fn)
     if (slash > base)
         base = slash;
     base = base ? base + 1 : fn;
-    return 0 == _stricmp(base, "all.spawn");
+
+    LPCSTR ext = strrchr(base, '.');
+    if (!ext || 0 != _stricmp(ext, ".spawn"))
+        return false;
+    return 0 == _strnicmp(base, "all", 3);
 }
 
 // IFileDialog keeps a per-GUID "last folder" bag. Without our own GUID, all
